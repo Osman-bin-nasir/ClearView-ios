@@ -22,8 +22,9 @@ and the supplied screenshots remain the source of truth.
 | Haramayn | `media/ui/LiveTab.kt`, `media/data/LiveStreamConfig.kt` | Makkah/Madinah destinations and official live-channel entry points added. Embedded live resolver pending. |
 | Directory | `directory/ui/ChannelDirectoryScreen.kt`, `media/ui/ChannelDirectorySheet.kt` | Existing real API directory retained; further category/subcategory layout refinement pending. |
 | Good Post | `goodpost/ui/GoodPostHome.kt`, `GoodPostExplore.kt`, `GoodPostDiscover.kt` | Compact followed/owned channel rows, search/overflow toolbar, Explore pill, actual advertisement carousel, sectioned discovery, separate Follow controls, and server-backed category search/sorting/paging implemented. Visual verification deferred to the user. |
+| Good Post channel | `goodpost/ui/GoodPostFeed.kt`, `GoodPostChannelInfo.kt`, `GoodPostStarredScreen.kt`, `GoodPostMediaGallery.kt`, `GoodPostAdmin.kt: ChannelFormScreen` | Channel feed with an **editable draft strip** that opens the full posting page with the draft intact, an information page (avatar, `Public channel · N followers`, Follow/Share link/Search, description + Read more, `Created on dd/MM/yy`, media strip, notification switch, starred row), a **channel edit form with picture change/remove** (the `adminUpdateChannel` route had no caller before this), the starred-messages list with per-row thumbnails and local highlighting search, and the channel media gallery with on-device video poster frames. Post-level selection/bulk actions, the crop step on a picked picture, and the inline video player remain pending. |
 | More / productivity | `ui/ContentHub.kt`, `todo/ui/TodoScreen.kt`, `quran/ui/DhikrCounterScreen.kt` | Existing tools retained. More layout and Todo statistics/calendar/editor parity pending. |
-| Administrator | `goodpost/ui/GoodPostAds.kt`, `GoodPostBrainRot.kt`, `GoodPostDirectory.kt` | Existing repository endpoints are available; dedicated role-gated management UI pending. |
+| Administrator | `goodpost/ui/GoodPostAds.kt`, `GoodPostBrainRot.kt`, `GoodPostDirectory.kt` | **Advertisement management implemented**: role-gated list (reachable from the Good Post overflow when signed in), text/image card editor with the fixed background/text palettes, placement toggles, priority, enable switch, picture upload, and delete — against `adminAds` / `adminCreateAd` / `adminUpdateAd` / `adminDeleteAd`. **Brain Rot (dashboard, review queue, rules, false reports) and directory administration remain pending.** The public curated directory is implemented (`GoodPostDirectoryView`): category chips, subcategories, `Saved copy` indicator, refresh, platform-labelled rows. |
 
 ## Integration boundaries
 
@@ -51,7 +52,11 @@ iPhone, exporting screenshots for visual review. Compilation alone is not visual
 validation.
 
 Tests cover Quran word/reference/Arabic search, library migration, progress-based
-filters, hiding, and UI navigation. Screenshots cover Quran Search/Surah/Bookmarks
+filters, hiding, and UI navigation. Good Post adds `GoodPostBookmarkTests`, which
+pins the star→bookmark conversion (channel id and **name**, the words, the time,
+and Android's `kind` precedence: a clip beats a picture, and a post carrying a
+link is `link` even when it also has words — the label is only drawn when the post
+has none). Screenshots cover Quran Search/Surah/Bookmarks
 and Media Feed/Videos/Filters/channel addition. Targeted player checks add command
 delivery, player state, progress/playlist persistence, control placement, and the
 four-item menu. Real-network playback verification can be skipped by CI when

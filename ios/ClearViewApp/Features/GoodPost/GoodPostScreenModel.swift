@@ -20,6 +20,31 @@ final class GoodPostScreenModel {
 
     var canCreateChannel: Bool { session == nil || session?.isSuperAdmin == true }
 
+    /// Whether this account may publish to — or edit and delete posts in — a channel.
+    ///
+    /// The same rule the Android app applies: a super administrator manages every
+    /// channel, and a channel administrator only the one the server confined them to.
+    /// A signed-out reader manages nothing, which is what keeps a reader from being
+    /// offered a control that would only be refused.
+    func canManage(_ channelId: String) -> Bool {
+        guard let session else { return false }
+        return session.isSuperAdmin || session.channelId == channelId
+    }
+
+    /// This state with `channel` replacing the row it identifies.
+    ///
+    /// One channel appears in up to three places in the tab — the account's own list, the
+    /// reader's followed list, and the screen that is open — and an edit that updated some of
+    /// them would leave the tab disagreeing with itself about a name or a picture. Rows that
+    /// are not there stay absent: this replaces a channel, it does not add one.
+    func applyUpdatedChannel(_ channel: GoodPostChannel) {
+        func replaced(_ rows: [GoodPostChannel]) -> [GoodPostChannel] {
+            rows.map { $0.id == channel.id ? channel : $0 }
+        }
+        channels = replaced(channels)
+        ownedChannels = replaced(ownedChannels)
+    }
+
     var homeChannels: [GoodPostChannel] {
         let ownedIDs = Set(ownedChannels.map(\.id))
         return ownedChannels + channels.filter { followedIDs.contains($0.id) && !ownedIDs.contains($0.id) }

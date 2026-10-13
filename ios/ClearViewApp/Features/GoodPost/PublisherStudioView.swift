@@ -189,14 +189,35 @@ struct PublisherChannelView: View {
 struct PostComposerView: View {
     let channel: GoodPostChannel
     let repository: GoodPostRepository
+    /// The draft the channel feed's strip already holds, when this was opened from it.
+    ///
+    /// The strip is an editable field, so the pencil beside it is not a way in from nothing — it
+    /// is the same draft given the whole screen. Starting a new post here would have deleted the
+    /// line the reader had just typed.
+    let initialText: String
+    /// Told when a post actually published, so the strip can clear the draft it was holding.
+    let onPublished: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
+    @State private var text: String
     @State private var link = ""
     @State private var attachments: [GoodPostMedia] = []
     @State private var showFiles = false
     @State private var busy = false
     @State private var message: String?
     @State private var confirmPublish = false
+
+    init(
+        channel: GoodPostChannel,
+        repository: GoodPostRepository,
+        initialText: String = "",
+        onPublished: (() -> Void)? = nil
+    ) {
+        self.channel = channel
+        self.repository = repository
+        self.initialText = initialText
+        self.onPublished = onPublished
+        _text = State(initialValue: initialText)
+    }
 
     var body: some View {
         NavigationStack {
@@ -243,7 +264,12 @@ struct PostComposerView: View {
         if !link.isEmpty { body["linkUrl"] = link }
         let result = await repository.adminCreatePost(channelId: channel.id, body: body)
         busy = false
-        if result.isOk { dismiss() } else { message = result.userMessage }
+        if result.isOk {
+            onPublished?()
+            dismiss()
+        } else {
+            message = result.userMessage
+        }
     }
 
     private func upload(_ url: URL) async {

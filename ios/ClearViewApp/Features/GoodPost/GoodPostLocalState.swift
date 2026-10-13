@@ -324,3 +324,31 @@ struct GoodPostStarredStore {
         defaults.set(json, forKey: Key.entries)
     }
 }
+
+extension GoodPostPost {
+    /// This post as a bookmark.
+    ///
+    /// The channel and its name travel with it so the bookmark can still be read from the
+    /// information page after the post has aged out of the server's retention window — and
+    /// `kind` is what the row says when the post had no words to keep, which is every
+    /// photo-only bookmark.
+    ///
+    /// A clip wins over a picture when a post carries both: a poster frame on its own is
+    /// indistinguishable from a photograph of the same scene, so the mark that says it plays is
+    /// the one worth keeping.
+    func starredEntry(channel: GoodPostChannel) -> GoodPostStarredEntry {
+        let kind: String
+        if hasVideo { kind = "video" }
+        else if hasImage { kind = "image" }
+        else if isLink { kind = "link" }
+        else { kind = "text" }
+        return GoodPostStarredEntry(
+            postId: id,
+            channelId: channel.id,
+            channelName: channel.name,
+            body: body,
+            kind: kind,
+            createdAt: createdAt
+        )
+    }
+}
