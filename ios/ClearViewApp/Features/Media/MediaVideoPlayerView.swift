@@ -66,6 +66,7 @@ struct MediaVideoPlayerView: View {
         }.background(Color.cvBackground).tint(.cvPrimary)
             .navigationTitle(video.title).navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
             .sheet(isPresented: $showPlaylists) { MediaPlaylistPicker(video: video, library: library) }
             .alert("YouTube playback limitation", isPresented: Binding(get: { limitation != nil }, set: { if !$0 { limitation = nil } })) {
                 Button("OK", role: .cancel) { limitation = nil }
@@ -142,7 +143,7 @@ struct MediaVideoPlayerView: View {
     }
 
     private func transportButton(_ title: String, symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(.system(size: 27)).frame(maxWidth: .infinity).frame(height: 48) }
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 27)).foregroundStyle(enabled ? Color.cvPrimary : Color.cvOnSurfaceVariant.opacity(0.45)).frame(maxWidth: .infinity).frame(height: 48) }
             .buttonStyle(.plain).disabled(!enabled).accessibilityLabel(title)
     }
 

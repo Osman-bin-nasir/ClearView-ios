@@ -49,7 +49,7 @@ final class YouTubePlayerTests: XCTestCase {
         XCTAssertFalse(webView.isLoading)
         _ = try await webView.evaluateJavaScript("""
         var calls = [];
-        var player = {pauseVideo:()=>calls.push('pause'), playVideo:()=>calls.push('play'),
+        var player = {pauseVideo:()=>calls.push('pause'), playVideo:()=>{calls.push('play'); return window;},
           mute:()=>calls.push('mute'), unMute:()=>calls.push('unmute'),
           seekTo:(value)=>calls.push('seek:'+value), setPlaybackRate:(value)=>calls.push('rate:'+value)};
         function snapshot() {}
@@ -65,6 +65,8 @@ final class YouTubePlayerTests: XCTestCase {
         player.setRate(5)
         let calls = try await webView.evaluateJavaScript("calls") as? [String]
         XCTAssertEqual(calls, ["play", "seek:0", "seek:90", "mute", "rate:1.5"])
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(player.error)
     }
 
     func testProgressAndPlaylistPersistWithoutDuplicates() {

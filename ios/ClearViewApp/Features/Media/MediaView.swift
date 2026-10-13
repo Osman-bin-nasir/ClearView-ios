@@ -80,6 +80,7 @@ struct MediaView: View {
                     }
                 }.padding(.horizontal, 16).padding(.vertical, 12)
             }.background(Color.cvBackground).navigationTitle("Media")
+                .toolbar(.visible, for: .tabBar)
                 .refreshable { await library.refresh() }
                 .task { await library.refresh() }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }

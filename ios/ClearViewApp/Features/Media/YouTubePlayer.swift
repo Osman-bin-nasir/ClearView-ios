@@ -22,7 +22,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
 
     func command(_ script: String) {
         guard ready, error == nil else { return }
-        webView?.evaluateJavaScript("if (player) { \(script) }") { [weak self] _, failure in
+        webView?.evaluateJavaScript("if (player) { \(script) } true;") { [weak self] _, failure in
             if failure != nil { self?.error = "The player could not receive this action. Try reloading the video." }
         }
     }
