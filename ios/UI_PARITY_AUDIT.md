@@ -32,8 +32,9 @@ and the supplied screenshots remain the source of truth.
   `CLEARVIEW_MEDIA_FIXTURE`; they neither authenticate nor write to the backend.
 - YouTube feed content comes from RSS. Instagram/X feed ingestion is not connected
   on iOS; the channel-add UI explicitly says so and preserves profile browsing.
-- Opening Safari is not evidence that a video was watched. Recently opened remains
-  in the feed menu. Continue Watching only renders stored, valid progress and
+- Opening a link is not evidence that a video was watched. The feed menu has only
+  Hidden Videos, Hidden Channels, Add Video by URL, and Add Video from Device.
+  Saved and recently opened records are retained. Continue Watching only renders stored, valid progress and
   excludes Shorts, live streams, hidden videos, and hidden All Feed channels.
   Embedded playback now records real player position/duration, throttled to five seconds with pause/exit flushes.
 - Existing Media JSON migrates through optional fields without deleting saved
@@ -51,7 +52,10 @@ validation.
 
 Tests cover Quran word/reference/Arabic search, library migration, progress-based
 filters, hiding, and UI navigation. Screenshots cover Quran Search/Surah/Bookmarks
-and Media Feed/Videos/Filters/channel addition.
+and Media Feed/Videos/Filters/channel addition. Targeted player checks add command
+delivery, player state, progress/playlist persistence, control placement, and the
+four-item menu. Real-network playback verification can be skipped by CI when
+YouTube is unavailable; a skipped smoke test is not a playback success.
 
 This is the Quran/Media discovery slice, not a claim of complete parity across all
 nine requested phases. Playback/playlists precede Good Post, tools, and admin work.

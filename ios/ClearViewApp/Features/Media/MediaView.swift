@@ -342,7 +342,7 @@ struct MediaView: View {
                     } else { Button { open(video) } label: { Label(video.title, systemImage: "play.circle") } }
                 }
                 if videos.isEmpty { Text("No \(title.lowercased())").foregroundStyle(Color.cvOnSurfaceVariant) }
-            }.navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showHiddenVideos = false; showSaved = false; showRecent = false } } }
+            }.navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showHiddenVideos = false } } }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
         }
     }
