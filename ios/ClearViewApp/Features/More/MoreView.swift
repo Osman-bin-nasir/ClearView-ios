@@ -2,111 +2,211 @@ import SwiftUI
 
 struct MoreView: View {
     @AppStorage("appearance") private var appearance = "dark"
+    @State private var showAppearance = false
+    @State private var showSettings = false
+    @State private var showPhoneLimit = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("A little more intention.").font(.title2.bold())
-                        Text("Small tools for a more mindful day.")
-                            .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
-                    }.padding(.top, 8)
-                    VStack(spacing: 12) {
-                        CVSectionHeader(title: "Your daily tools")
-                        NavigationLink { TodoView() } label: {
-                            tool("Todo", detail: "Plan, remember, and complete your tasks", icon: "checkmark.circle")
-                        }
-                        NavigationLink { FocusTimerView() } label: {
-                            tool("Set Phone Limit", detail: "Make room for a moment of focus", icon: "timer")
-                        }
-                        NavigationLink { DhikrCounterView() } label: {
-                            tool("Dhikr Counter", detail: "Keep your remembrance close", icon: "circle.dotted.circle")
-                        }
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionLabel("TOOLS")
+                    NavigationLink { TodoView() } label: {
+                        MoreToolRow(title: "Todo", detail: "Plan, remember, and complete your tasks", symbol: "checkmark.circle")
                     }
-                    CVCard {
-                        HStack(alignment: .top, spacing: 14) {
-                            Image(systemName: "leaf").font(.title2).foregroundStyle(Color.cvPrimary)
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text("Time well spent").font(.headline)
-                                Text("Read something meaningful. Make space for a good habit. Take it one day at a time.")
-                                    .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
-                            }
+                    Button { showPhoneLimit = true } label: {
+                        MoreToolRow(title: "Set Phone Limit", detail: "Countdown with a reminder when your time is up", symbol: "timer")
+                    }
+                    NavigationLink { DhikrCounterView() } label: {
+                        MoreToolRow(title: "Dhikr Counter", detail: "Count your dhikr with ease", emoji: "📿")
+                    }
+                    sectionLabel("PROTECTION").padding(.top, 4)
+                    NavigationLink { ProtectionOverviewView() } label: {
+                        MoreToolRow(title: "Protection", detail: "Blocking, keywords, websites, DNS and app lock", symbol: "shield.fill", highlighted: true)
+                    }
+                }.padding(16)
+            }.background(Color.cvBackground).navigationTitle("")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.visible, for: .navigationBar)
+                .toolbarBackground(Color.cvBackground, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("More").font(.title2.bold())
+                            Text("Tools & protection").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                        }.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button { showAppearance = true } label: { Image(systemName: appearance == "light" ? "sun.max" : "moon") }
+                            .accessibilityLabel("Appearance")
+                        Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                            .accessibilityLabel("Settings")
+                    }
+                }
+                .confirmationDialog("Appearance", isPresented: $showAppearance, titleVisibility: .visible) {
+                    Button("Use system appearance") { appearance = "system" }
+                    Button("Light") { appearance = "light" }
+                    Button("Dark") { appearance = "dark" }
+                }
+                .sheet(isPresented: $showSettings) {
+                    NavigationStack {
+                        AppSettingsView().toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("Done") { showSettings = false } }
                         }
-                    }
-                    NavigationLink { AppSettingsView() } label: {
-                        tool("Settings", detail: "Appearance, reminders, and about", icon: "gearshape")
-                    }
-                    Text("CLEARVIEW · A MINDFUL DIGITAL LIFE")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded)).tracking(2)
-                        .foregroundStyle(Color.cvOnSurfaceVariant).frame(maxWidth: .infinity).padding(.top, 12)
-                }.padding(20)
-            }
-            .background(Color.cvBackground).navigationTitle("More")
-            .toolbar {
-                Button { appearance = appearance == "dark" ? "light" : "dark" } label: {
-                    Image(systemName: appearance == "dark" ? "sun.max" : "moon")
-                }.accessibilityLabel("Switch appearance")
-            }.buttonStyle(.plain)
+                    }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+                }
+                .sheet(isPresented: $showPhoneLimit) {
+                    NavigationStack {
+                        FocusTimerView().toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("Done") { showPhoneLimit = false } }
+                        }
+                    }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+                }
+                .buttonStyle(.plain)
         }
     }
 
-    private func tool(_ title: String, detail: String, icon: String) -> some View {
-        CVCard {
-            HStack(spacing: 14) {
-                Image(systemName: icon).font(.title3).foregroundStyle(Color.cvPrimary)
-                    .frame(width: 44, height: 44)
-                    .background(Color.cvPrimary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-            }.foregroundStyle(Color.cvOnSurface)
-        }
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title).font(.caption2.weight(.medium)).foregroundStyle(Color.cvOnSurfaceVariant)
+            .padding(.leading, 4).padding(.top, 4).accessibilityAddTraits(.isHeader)
+    }
+}
+
+private struct MoreToolRow: View {
+    let title: String
+    let detail: String
+    var symbol: String? = nil
+    var emoji: String? = nil
+    var highlighted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10).fill(Color.cvPrimary.opacity(highlighted ? 0.22 : 0.12))
+                if let symbol { Image(systemName: symbol).font(.system(size: 19)).foregroundStyle(Color.cvPrimary) }
+                if let emoji { Text(emoji).font(.system(size: 20)) }
+            }.frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(highlighted ? Color.cvOnPrimaryContainer : Color.cvOnSurfaceVariant)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+        }.foregroundStyle(highlighted ? Color.cvOnPrimaryContainer : Color.cvOnSurface)
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(highlighted ? Color.cvPrimaryContainer : Color.cvSurfaceContainerLow,
+                        in: RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private struct ProtectionOverviewView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Security & controls", systemImage: "shield.fill")
+                    .font(.title3.bold()).foregroundStyle(Color.cvPrimary)
+                Label("Not connected on iOS", systemImage: "info.circle").font(.headline)
+                Text("ClearView's Android protection service is not implemented on iOS. Opening this page does not enable blocking, DNS filtering, device locking, or monitoring of other apps.")
+                    .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                VStack(alignment: .leading, spacing: 16) {
+                    Label("Keyword and channel blocking", systemImage: "text.badge.xmark")
+                    Label("Website and DNS filtering", systemImage: "network")
+                    Label("App lock and device controls", systemImage: "lock")
+                }.font(.subheadline).padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 16))
+                Text("These controls need a dedicated iOS integration. They are listed here for parity, not presented as active features.")
+                    .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
+            }.padding(16)
+        }.background(Color.cvBackground).navigationTitle("Protection")
+            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
 }
 
 struct AppSettingsView: View {
     @AppStorage("appearance") private var appearance = "dark"
     @State private var reminders = QuranReminderSettingsModel()
+    @State private var textScale = QuranStore().arabicTextScale
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Form {
-            Section("Appearance") {
-                Picker("Theme", selection: $appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
-            }
-            Section("Quran reminders") {
-                Toggle("Notifications", isOn: Binding(get: { reminders.notificationsEnabled }, set: { enabled in
-                    Task { await reminders.setNotifications(enabled: enabled, verse: QuranStore().currentVerse) }
-                }))
-                Picker("Remind me", selection: Binding(get: { reminders.intervalHours }, set: { hours in
-                    Task { await reminders.setInterval(hours: hours, verse: QuranStore().currentVerse) }
-                })) {
-                    ForEach(reminders.intervalOptions, id: \.hours) { option in Text(option.label).tag(option.hours) }
-                }
-                if reminders.permissionDenied {
-                    Button("Allow notifications in Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Quran · New Verse").font(.headline)
+                    Text("New verse every").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(reminders.intervalOptions, id: \.hours) { option in
+                                CVChip(title: "\(option.hours) hr", selected: reminders.intervalHours == option.hours) {
+                                    Task { await reminders.setInterval(hours: option.hours, verse: QuranStore().currentVerse) }
+                                }
+                            }
+                        }
                     }
-                }
-                Text("While the app is closed, reminders repeat the last loaded verse. Open ClearView to refresh it.")
-                    .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
-            }
-            Section("About ClearView") {
-                LabeledContent("Version", value: "1.0")
-                Text("A calmer place for Quran, thoughtful media, and good habits.")
-                Link("Privacy policy", destination: URL(string: "https://muddassir-2025.github.io/ClearView/docs/privacy-policy.html")!)
-                Link("Source code", destination: URL(string: "https://github.com/muddassir-2025/ClearView-ios")!)
-            }
-        }.scrollContentBackground(.hidden).background(Color.cvBackground)
-            .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
+                    Text("Refresh interval: \(reminders.intervalLabel).")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    Divider()
+                    HStack {
+                        Text("Quran reading size").font(.subheadline)
+                        Spacer()
+                        Text("\(Int(textScale * 100))%").font(.caption.bold()).foregroundStyle(Color.cvPrimary)
+                    }
+                    Slider(value: $textScale, in: QuranStore.arabicTextScaleRange, step: 0.05)
+                        .accessibilityLabel("Quran reading text size")
+                    Text("Adjusts Arabic text in the Quran reader. iOS notification text size is controlled by the system.")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                }.settingsCard()
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Notifications").font(.headline)
+                    Toggle(isOn: Binding(get: { reminders.notificationsEnabled }, set: { enabled in
+                        Task { await reminders.setNotifications(enabled: enabled, verse: QuranStore().currentVerse) }
+                    })) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quran Reminders").font(.subheadline.weight(.semibold))
+                            Text("Get a notification when a new verse arrives.")
+                                .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                        }
+                    }
+                    if reminders.permissionDenied {
+                        Button("Allow notifications in Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }.font(.subheadline.bold())
+                    }
+                    Text("While the app is closed, reminders repeat the last loaded verse. Open ClearView to refresh it. Channel and media notification settings are not connected on iOS yet.")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                }.settingsCard()
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Appearance").font(.headline)
+                    Picker("Theme", selection: $appearance) {
+                        Text("System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }.pickerStyle(.segmented)
+                }.settingsCard()
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("About ClearView").font(.headline)
+                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                    Text("A calmer place for Quran, thoughtful media, and good habits.")
+                        .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                    Link("Privacy policy", destination: URL(string: "https://muddassir-2025.github.io/ClearView/docs/privacy-policy.html")!)
+                    Link("Source code", destination: URL(string: "https://github.com/muddassir-2025/ClearView-ios")!)
+                }.settingsCard()
+            }.padding(16)
+        }.background(Color.cvBackground).navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             .task { await reminders.load() }
+            .onChange(of: textScale) { _, scale in
+                var store = QuranStore()
+                store.arabicTextScale = scale
+            }
+    }
+}
+
+private extension View {
+    func settingsCard() -> some View {
+        padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 16))
     }
 }

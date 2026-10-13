@@ -9,8 +9,6 @@ struct DhikrCounterView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
-                Text("A MOMENT OF REMEMBRANCE").font(.caption2.weight(.semibold))
-                    .tracking(2).foregroundStyle(Color.cvPrimary).padding(.top, 20)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
                         ForEach(model.visibleItems) { item in
@@ -20,8 +18,8 @@ struct DhikrCounterView: View {
                 }
                 if let item = model.selected {
                     VStack(spacing: 12) {
-                        Text(item.arabic).font(.system(size: 38)).multilineTextAlignment(.center)
                         Text(item.name).font(.title2.bold())
+                        Text(item.arabic).font(.system(size: 38)).multilineTextAlignment(.center)
                         Text(item.translation).font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
                     }
                     Button {
@@ -42,7 +40,7 @@ struct DhikrCounterView: View {
                                     .foregroundStyle(Color.cvOnSurfaceVariant)
                                 Text("TAP TO COUNT").font(.caption2.weight(.bold)).tracking(2).foregroundStyle(Color.cvPrimary)
                             }
-                        }.frame(width: 260, height: 260).contentShape(Circle())
+                        }.aspectRatio(1, contentMode: .fit).frame(maxWidth: 296).contentShape(Circle())
                     }.buttonStyle(.plain).accessibilityLabel("Count \(item.name), \(item.count) of \(item.target)")
                         .accessibilityIdentifier("dhikr.count")
                     HStack {
@@ -64,6 +62,7 @@ struct DhikrCounterView: View {
                 Toggle("Haptic feedback", isOn: $model.vibrationEnabled).padding(.horizontal)
             }.padding(20)
         }.background(Color.cvBackground).navigationTitle("Dhikr Counter").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
             .toolbar {
                 Button { showReset = true } label: { Image(systemName: "arrow.counterclockwise") }.accessibilityLabel("Reset count")
                 Button { showAdd = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add dhikr")

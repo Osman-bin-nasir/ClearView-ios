@@ -11,21 +11,22 @@ struct FocusTimerView: View {
             let remaining = max(0, Int(ceil(endTimestamp - context.date.timeIntervalSince1970)))
             let active = remaining > 0
             ScrollView {
-                VStack(spacing: 32) {
-                    Image(systemName: "leaf").font(.system(size: 42, weight: .light)).foregroundStyle(Color.cvPrimary)
-                    Text(active ? "A little space to focus." : endTimestamp > 0 ? "A moment well spent." : "Choose your moment.")
-                        .font(.title2.bold()).multilineTextAlignment(.center)
-                    ZStack {
-                        Circle().stroke(Color.cvSurfaceContainerHigh, lineWidth: 10)
-                        Circle().trim(from: 0, to: active ? min(1, Double(remaining) / Double(duration * 60)) : 1)
-                            .stroke(Color.cvPrimary, style: StrokeStyle(lineWidth: 10, lineCap: .round)).rotationEffect(.degrees(-90))
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(active ? "Phone limit is running" : "Set a countdown").font(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
                         Text(String(format: "%02d:%02d", active ? remaining / 60 : duration, active ? remaining % 60 : 0))
-                            .font(.system(size: 64, weight: .light, design: .rounded)).monospacedDigit()
-                    }.frame(width: 260, height: 260)
+                            .font(.system(size: 48, weight: .bold, design: .monospaced)).foregroundStyle(Color.cvPrimary)
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                        Text(active ? "Time remaining" : "Minutes : seconds").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 16))
                     if !active {
-                        HStack {
-                            ForEach([5, 15, 25, 45], id: \.self) { minutes in
-                                CVChip(title: "\(minutes)m", selected: duration == minutes) { duration = minutes }
+                        Text("Duration").font(.subheadline.bold())
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach([5, 15, 25, 45], id: \.self) { minutes in
+                                    CVChip(title: "\(minutes)m", selected: duration == minutes) { duration = minutes }
+                                }
                             }
                         }
                         Stepper("\(duration) minutes", value: $duration, in: 1...180, step: 1)
@@ -35,13 +36,14 @@ struct FocusTimerView: View {
                             endTimestamp = 0
                             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["clearview.focus"])
                         } else { Task { await start() } }
-                    }.buttonStyle(.borderedProminent).controlSize(.large)
+                    }.buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity, alignment: .trailing)
                     Text("A gentle reminder when your time is up. This timer doesn't lock your phone or block other apps.")
-                        .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center)
+                        .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
                     if let notificationNote { CVErrorBanner(message: notificationNote) }
-                }.padding(24).padding(.top, 24)
+                }.padding(20)
             }.background(Color.cvBackground)
         }.navigationTitle("Set Phone Limit").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
     }
 
     private func start() async {
