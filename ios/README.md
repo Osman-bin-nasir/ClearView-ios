@@ -21,6 +21,12 @@ A native SwiftUI app for iPhone and iPad (iOS 18+), using the ClearView Android 
 
 Empty libraries start empty: the app never invents personal tasks, watch progress, followers, or posts. Use **Media → Explore** to add channels, or **+** to save a link. Good Post reads public data immediately and falls back to cached content with a visible retry message when offline.
 
+### Good Post reference UI
+
+The home header, compact channel navigation, Explore spacing, and channel feed follow the supplied Android screenshots. Channel updates use the Android repository's `goodpost_chat_bg.jpg` wallpaper and its olive bubble/sage timestamp colours. Updates read oldest to newest, with date separators and the newest update at the bottom; earlier pages load above them. The channel information page remains reachable through the compact avatar/name header, while Follow and Save remain available in the channel menu. The publisher composer retains its draft and attachment workflow behind the attachment and pencil controls. Advertisement management is offered only to super administrators.
+
+This UI refinement has not been built, tested, or checked on a simulator at the user's request. Manually review home, Explore, a channel with text/media updates, earlier-page loading, search, follow/save, and the publisher composer on an iPhone before merging.
+
 ## Backend and identity
 
 - Backend: `https://clearview-1neb.onrender.com`, configured in `ios/Info.plist` under `GoodPostBaseURL`.
