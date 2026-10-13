@@ -27,6 +27,14 @@ The home header, compact channel navigation, Explore spacing, and channel feed f
 
 This UI refinement has not been built, tested, or checked on a simulator at the user's request. Manually review home, Explore, a channel with text/media updates, earlier-page loading, search, follow/save, and the publisher composer on an iPhone before merging.
 
+### More reference UI
+
+More follows Android's `MoreTab.kt`: a compact title/subtitle, appearance and settings actions, three Tools cards, and a highlighted Protection destination. Settings and the phone-limit countdown open as sheets. Quran refresh intervals and notifications use the existing reminder model; the reading-size slider updates the existing Arabic text preference rather than pretending to resize iOS alerts.
+
+Todo uses the reference's Today/Upcoming/Completed count chips, compact task rows, floating add button, and weekly productivity card. Additional filters, task editing, sort, and the daily target remain available. Weekly figures come from the user's existing tasks and completions; the extended Android annual heatmap/monthly calendar is not part of this UI slice. Dhikr retains its stored counts, targets, and haptics with the Android title order and an adaptive counter ring.
+
+Protection is an explicitly unconnected overview, not a working device-blocking service. Phone limits retain the existing cancellable, minute-based iOS reminder timer; Android's device locking and second-level duration input are not implemented. Channel/media notification preferences are also not connected. No tests, builds, lint, or simulator checks were run for this refinement at the user's request. Manually review More and its sheets, task creation/completion/filtering, Dhikr counting, and timer start/end before merging.
+
 ## Backend and identity
 
 - Backend: `https://clearview-1neb.onrender.com`, configured in `ios/Info.plist` under `GoodPostBaseURL`.
