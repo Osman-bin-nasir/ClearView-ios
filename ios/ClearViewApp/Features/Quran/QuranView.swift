@@ -38,7 +38,7 @@ struct QuranView: View {
             .background(Color.cvBackground)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showLibrary) {
-                QuranLibraryView()
+                QuranLibraryView(repository: model.repository, section: .search)
             }
             .task { await model.load() }
             .onDisappear { audio.release() }

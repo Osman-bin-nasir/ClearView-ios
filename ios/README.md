@@ -43,6 +43,6 @@ xcodebuild test -project ios/ClearView.xcodeproj -scheme ClearView \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' CODE_SIGNING_ALLOWED=NO
 ```
 
-`.github/workflows/ios.yml` builds the actual app on a macOS runner, runs shared tests and iOS unit/UI tests, and uploads the `.xcresult`, build log, and screenshots. New regression tests cover task persistence/archive behavior, media validation/deduplication, deep-link routing, tab navigation, Dhikr interaction, and playlist creation. Existing Quran/bookmark tests enter the new **Browse Quran** route before exercising the reader.
+`.github/workflows/ios.yml` builds the actual app on a macOS runner, runs shared tests and iOS unit/UI tests, and uploads the `.xcresult`, build log, and screenshots. Regression tests cover task persistence/archive behavior, media validation/deduplication, deep-link routing, tab navigation, Dhikr interaction, playlist creation, Quran discovery/search, library migration, and feed filters. Quran/bookmark tests enter **Search Quran → Surah** before exercising the reader. Targeted discovery checks also run on a compact available iPhone. See `UI_PARITY_AUDIT.md` for the Android reference map and remaining phases.
 
 Use the workflow's screenshot artifacts to review the Quran, Media, Good Post, More, Todo, and Dhikr screens. Never run publisher write tests against the production backend; use a staging deployment and dedicated account for authenticated end-to-end testing.

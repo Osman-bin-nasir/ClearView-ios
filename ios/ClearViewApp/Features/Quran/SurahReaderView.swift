@@ -12,6 +12,7 @@ import SharedKotlin
 ///    present, so a missing or not-yet-cached Arabic edition degrades to a
 ///    readable English reader instead of a blank page.
 struct SurahReaderView: View {
+    @Environment(\.dismiss) private var dismiss
 
     @State private var model: SurahReaderModel
 
@@ -32,7 +33,13 @@ struct SurahReaderView: View {
             // Android toolbar puts them too.
             .navigationTitle(model.surah.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
+            .navigationBarBackButtonHidden()
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Back").accessibilityIdentifier("BackButton")
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Text size before the star, so the destructive-ish action
                     // (unstarring) is not the control nearest the edge a thumb

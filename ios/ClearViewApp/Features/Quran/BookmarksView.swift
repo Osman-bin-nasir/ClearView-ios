@@ -28,15 +28,21 @@ import SharedKotlin
     struct BookmarksView: View {
 
     @State private var model: BookmarksModel
+    @State private var query = ""
+    private let embedded: Bool
 
-    init(repository: QuranRepository) {
+    init(repository: QuranRepository, embedded: Bool = false) {
         _model = State(initialValue: BookmarksModel(repository: repository))
+        self.embedded = embedded
     }
 
     var body: some View {
-        content
+        VStack(spacing: 12) {
+            CVSearchField(text: $query, prompt: "Search bookmarks", identifier: "bookmarks.search").padding(.horizontal, 16)
+            content
+        }
             .background(Color.cvBackground)
-            .navigationTitle("Bookmarks")
+            .navigationTitle(embedded ? "Quran" : "Bookmarks")
             .navigationBarTitleDisplayMode(.inline)
             // `onAppear` rather than `task`: the reader can change a bookmark and
             // then pop back here, and the list has to include it. `task` runs once
@@ -58,8 +64,8 @@ import SharedKotlin
             } else {
                 List {
                     if !starred.isEmpty {
-                        Section("Starred surahs") {
-                            ForEach(starred) { surah in
+                        Section("Bookmarked Surahs") {
+                            ForEach(starred.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.translation.localizedCaseInsensitiveContains(query) || Int(query) == $0.number }) { surah in
                                 // No `openAt`: a starred surah means "read this
                                 // surah", so the reader restores the saved reading
                                 // position — which is what a reader wants.
@@ -76,7 +82,7 @@ import SharedKotlin
 
                     if !verses.isEmpty {
                         Section("Bookmarked verses") {
-                            ForEach(verses) { verse in
+                            ForEach(verses.filter { query.isEmpty || $0.surah.name.localizedCaseInsensitiveContains(query) || $0.text.localizedCaseInsensitiveContains(query) || $0.id.contains(query) }) { verse in
                                 // `openAt`: a bookmarked verse means "take me to
                                 // *this* verse", which is a different intent from
                                 // "read this surah" — and the only reason the

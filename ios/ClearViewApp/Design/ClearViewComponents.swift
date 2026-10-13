@@ -1,4 +1,23 @@
 import SwiftUI
+
+struct CVSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    var identifier = "discovery.search"
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").foregroundStyle(Color.cvOnSurfaceVariant)
+            TextField(prompt, text: $text).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .accessibilityIdentifier(identifier)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .accessibilityLabel("Clear search")
+            }
+        }.padding(14).background(Color.cvBackground, in: Capsule())
+            .overlay(Capsule().stroke(Color.cvPrimary, lineWidth: 1.5))
+    }
+}
 import SafariServices
 
 struct CVCard<Content: View>: View {

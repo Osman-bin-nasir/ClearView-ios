@@ -39,6 +39,10 @@ struct ClearViewApp: App {
             UserDefaults.standard.removePersistentDomain(forName: domain)
         }
         seedReadingPositionIfAsked(arguments)
+        if let fixture = ProcessInfo.processInfo.environment["CLEARVIEW_MEDIA_FIXTURE"],
+           let data = fixture.data(using: .utf8), (try? JSONDecoder().decode(MediaLibraryState.self, from: data)) != nil {
+            UserDefaults.standard.set(data, forKey: "media.library.v1")
+        }
     }
 
     /// Records a reading position before the app opens, when a UI test asks for

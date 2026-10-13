@@ -64,6 +64,9 @@ final class BookmarksUITests: XCTestCase {
             file: file, line: line
         )
         search.tap()
+        let surahs = app.buttons["quran.section.Surah"]
+        XCTAssertTrue(surahs.waitForExistence(timeout: 15))
+        surahs.tap()
     }
 
     /// The whole flow, plus the assertion that the explicit verse wins.
@@ -108,7 +111,7 @@ final class BookmarksUITests: XCTestCase {
         let bookmarksButton = app.buttons["Bookmarks"]
         XCTAssertTrue(bookmarksButton.waitForExistence(timeout: 15), "the Quran tab must offer Bookmarks")
         bookmarksButton.tap()
-        XCTAssertTrue(app.navigationBars["Bookmarks"].waitForExistence(timeout: 15), "Bookmarks must open")
+        XCTAssertTrue(app.textFields["bookmarks.search"].waitForExistence(timeout: 15), "Bookmarks must open")
 
         // The saved verse is listed, and its position is shown as the row's own
         // label. Addressed by identifier, not by that label: the surah list is
@@ -168,11 +171,11 @@ final class BookmarksUITests: XCTestCase {
         let bookmarksButton = app.buttons["Bookmarks"]
         XCTAssertTrue(bookmarksButton.waitForExistence(timeout: 15))
         bookmarksButton.tap()
-        XCTAssertTrue(app.navigationBars["Bookmarks"].waitForExistence(timeout: 15), "Bookmarks must open")
+        XCTAssertTrue(app.textFields["bookmarks.search"].waitForExistence(timeout: 15), "Bookmarks must open")
 
         // The starred surah is listed under its own heading…
         XCTAssertTrue(
-            app.staticTexts["Starred surahs"].waitForExistence(timeout: 30),
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Bookmarked Surahs'")).firstMatch.waitForExistence(timeout: 30),
             "a starred surah must appear under the surah heading"
         )
         let row = app.descendants(matching: .any)
