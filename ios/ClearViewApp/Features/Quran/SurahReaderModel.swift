@@ -75,6 +75,19 @@ final class SurahReaderModel {
 
     private let openAt: Int32?
 
+    /// Re-reads where the reader left off, for a reader that is being shown again.
+    ///
+    /// Needed because SwiftUI can keep a destination's state across a pop and a
+    /// second push of the same row, so a surah reopened later in the same session
+    /// can get this model back rather than a new one — and the position it read the
+    /// first time (none, if the reader had not scrolled yet) was then what it tried
+    /// to restore. Called on every appearance, so the answer is always the store's
+    /// current one.
+    func refreshRestorePosition() {
+        guard hasLoaded else { return }
+        restorePosition = openAt ?? store.readingPosition(ofSurah: Int32(surah.number))
+    }
+
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true

@@ -48,12 +48,30 @@ final class BookmarksUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Opens the surah list from the Quran tab.
+    ///
+    /// The tab opens on the verse page (it is Android's `QuranTab`), and the
+    /// magnifier in its bar is the way to the surahs — the same route the Android
+    /// reader takes, rather than the "Browse Quran" card the page used to carry.
+    /// Waited on, because a cold launch shows the page before the bar's controls
+    /// are live: the bar's actions are disabled until there is a verse to act on.
+    private func openSurahList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let search = app.buttons["quran.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: listTimeout), "the Quran tab must offer search", file: file, line: line)
+        XCTAssertTrue(
+            app.staticTexts["quran.verse.position"].waitForExistence(timeout: listTimeout),
+            "the bar's actions are live once a verse is on the page",
+            file: file, line: line
+        )
+        search.tap()
+    }
+
     /// The whole flow, plus the assertion that the explicit verse wins.
     func testBookmarkedVerseIsReachableAndOpensAtThatVerse() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launch()
-        app.navigationBars.buttons["Browse Quran"].tap()
+        openSurahList(app)
 
         // Al-Baqara: long enough that scrolling genuinely moves the top of the
         // page far from ayah 1, which is what makes the final assertion mean
@@ -127,7 +145,7 @@ final class BookmarksUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launch()
-        app.navigationBars.buttons["Browse Quran"].tap()
+        openSurahList(app)
 
         let alFaatiha = app.staticTexts["Al-Faatiha"]
         XCTAssertTrue(alFaatiha.waitForExistence(timeout: listTimeout), "the surah list must appear")

@@ -9,7 +9,10 @@ final class AppFlowsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Quran Reminder"].waitForExistence(timeout: 10))
+        // The Quran tab draws its own Material-style bar rather than a navigation
+        // bar (it is a port of Android's `TopAppBar`), so its title is a label in
+        // the page rather than a navigation-bar title.
+        XCTAssertTrue(app.staticTexts["Quran Reminder"].waitForExistence(timeout: 10))
         capture("Quran", app: app)
         for tab in ["Media", "Good Post", "More"] {
             app.tabBars.buttons[tab].tap()

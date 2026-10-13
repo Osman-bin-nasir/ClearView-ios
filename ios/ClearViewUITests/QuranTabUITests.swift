@@ -29,7 +29,7 @@ final class QuranTabUITests: XCTestCase {
     /// The whole slice in one pass: list → tap → every ayah of the surah.
     func testSurahListOpensTheWholeSurah() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = Self.cleanLaunch
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
@@ -41,14 +41,19 @@ final class QuranTabUITests: XCTestCase {
             "the reader header must show the ayah count derived from the edition"
         )
         XCTAssertTrue(app.staticTexts["1:1"].exists, "the first ayah must render")
+        // Scrolled to, rather than only looked for: the reader is a lazy list, so
+        // "the last ayah renders" is a question about the whole surah and not about
+        // how many rows happen to fit on one screen.
+        for _ in 0..<2 { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["1:7"].waitForExistence(timeout: 10), "the last ayah of Al-Faatiha must render")
+        XCTAssertTrue(app.staticTexts["1:7"].isHittable, "the last ayah must actually be on screen")
     }
 
     /// A long surah opens too, and its header shows the real count (286), which
     /// is the number a hardcoded table would most likely get wrong.
     func testLongSurahOpensWithItsRealAyahCount() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = Self.cleanLaunch
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app), "the surah list must appear")
@@ -67,7 +72,7 @@ final class QuranTabUITests: XCTestCase {
     /// codec, not that the app writes and reads the same place across two launches.
     func testReadingPositionSurvivesRelaunch() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = Self.cleanLaunch
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app), "the surah list must appear")
@@ -77,13 +82,26 @@ final class QuranTabUITests: XCTestCase {
         )
 
         // Scroll a few screens in, so the top of the page is well past ayah 1.
+        // Scrolled until a known ayah is the one on screen, so the assertion after
+        // the relaunch has a specific target to demand rather than "not the top".
         for _ in 0..<4 { app.swipeUp() }
-        XCTAssertFalse(app.staticTexts["2:1"].exists, "scrolling must move past the first ayah")
+        XCTAssertFalse(app.staticTexts["2:1"].isHittable, "scrolling must move the first ayah off screen")
+        scrollUntilOnScreen("2:12", in: app)
 
         // Leave the reader, then leave the app entirely and come back.
         leaveReader(app)
         app.terminate()
+        // Relaunched WITHOUT the reset: a reading position surviving a relaunch is
+        // the whole point of this test, and a clean slate would erase what is being
+        // asserted.
+        app.launchArguments = Self.cleanLaunch
         app.launch()
+
+        // The app opens on the verse page, so the surah list is reached the way a
+        // reader reaches it: the magnifier in the bar.
+        let search = app.buttons["quran.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: listTimeout), "the Quran tab must open again")
+        search.tap()
 
         let alBaqaraAgain = app.staticTexts["Al-Baqara"]
         XCTAssertTrue(alBaqaraAgain.waitForExistence(timeout: listTimeout), "the surah list must appear again")
@@ -97,17 +115,81 @@ final class QuranTabUITests: XCTestCase {
                 .waitForExistence(timeout: 30),
             "the surah must render after relaunch"
         )
-        XCTAssertFalse(
-            app.staticTexts["2:1"].exists,
-            "the reader must reopen where it was left, not at the first ayah"
+        // The reader must come back to the ayah it was left on — asserted as "that
+        // ayah is on screen again" for the reason the test above gives.
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: app.staticTexts["2:12"], handler: nil)
+        waitForExpectations(timeout: 30)
+    }
+
+    /// The reader opens on the ayah the store recorded — the *restore* half alone.
+    ///
+    /// The position is seeded from outside (`--seed-reading-position 2:13`), so a
+    /// failure here is unambiguously a reader that ignored a position rather than a
+    /// reader that failed to remember one. The store round-trip itself is covered
+    /// by the unit tests and by the two tests below.
+    func testTheReaderOpensOnTheRecordedPosition() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--seed-reading-position", "2:13"]
+        app.launch()
+
+        XCTAssertTrue(openSurah("Al-Baqara", in: app), "the surah list must appear")
+
+        XCTAssertTrue(
+            app.staticTexts["2:13"].waitForExistence(timeout: 30),
+            "the reader must show the ayah it was told to open on"
         )
+        XCTAssertTrue(app.staticTexts["2:13"].isHittable, "that ayah must be the one on screen")
+        XCTAssertFalse(
+            app.staticTexts["2:1"].isHittable,
+            "the reader must open at the recorded ayah, not at the top of the surah"
+        )
+    }
+
+    /// Leaving a surah and coming back reopens it where it was left.
+    ///
+    /// The same rule as the relaunch test below, but without the relaunch: it
+    /// isolates "the reader remembers where I was" from "and the memory survives
+    /// the app being killed", which are two different failures that look identical
+    /// from the outside.
+    func testLeavingASurahAndReturningReopensWhereItWasLeft() throws {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+
+        XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app), "the surah list must appear")
+        XCTAssertTrue(app.staticTexts["2:1"].waitForExistence(timeout: 30), "the surah must open at its top")
+
+        for _ in 0..<4 { app.swipeUp() }
+        XCTAssertFalse(app.staticTexts["2:1"].isHittable, "scrolling must move the first ayah off screen")
+
+        // What the reader was looking at when they left — read off the screen
+        // rather than guessed, and asserted positively afterwards.
+        let leftOn = topVisibleAyah(in: app, surah: 2)
+        XCTAssertNotNil(leftOn, "the reader must be able to see which ayah they are on")
+
+        leaveReader(app)
+        let alBaqaraAgain = app.staticTexts["Al-Baqara"]
+        XCTAssertTrue(alBaqaraAgain.waitForExistence(timeout: 15), "the list must be back")
+        alBaqaraAgain.tap()
+
+        // The reader must come back to THAT ayah.
+        //
+        // Written as "the ayah I left on is on screen again", not as "the first ayah
+        // is not": a jump to a saved ayah leaves every row above it in the
+        // accessibility tree, off screen, so "2:1 is absent" is false either way and
+        // reported a working restore as a failure. Asking for the ayah the reader
+        // was actually on is both the stronger question and the one that cannot be
+        // satisfied by accident.
+        let target = try XCTUnwrap(leftOn)
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: app.staticTexts[target], handler: nil)
+        waitForExpectations(timeout: 30)
     }
 
     /// Going back returns to the list, so the navigation is real and the tab is
     /// still usable afterwards.
     func testGoingBackReturnsToTheList() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = Self.cleanLaunch
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
@@ -130,7 +212,7 @@ final class QuranTabUITests: XCTestCase {
     /// model kept growing on its own, the button would still be enabled here.
     func testTheArabicTextSizeControlsAreWiredAndBounded() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = Self.cleanLaunch
         app.launch()
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
 
@@ -156,7 +238,89 @@ final class QuranTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1:1"].exists, "the surah must still render at the largest size")
     }
 
+    /// The home page is the Android verse page: the surah and its ayah, the
+    /// reference with the reader's position inside the surah, the navigation
+    /// controls, and the two actions at the bottom.
+    ///
+    /// The reference string is *derived* — "Surah 1 · Ayah 1 of 7" comes from the
+    /// downloaded edition's own ayah count (the shared Kotlin parser counted it),
+    /// so a wrong number means a wrong parse rather than a stale literal.
+    func testHomePageShowsTheVerseWithItsPosition() {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["Quran Reminder"].waitForExistence(timeout: listTimeout),
+            "the Quran tab must open on the verse page"
+        )
+        // The reference line, and the controls that belong to it. Its label is the
+        // spoken form of the same line — "Ayah 3 of 7 in this surah" — which Android
+        // gives it too, so a screen reader hears the position once rather than twice.
+        XCTAssertTrue(
+            app.staticTexts["quran.verse.position"].waitForExistence(timeout: listTimeout),
+            "the verse page must state where in the Quran it is"
+        )
+        XCTAssertTrue(app.buttons["Previous"].exists, "the verse page must offer Previous")
+        XCTAssertTrue(app.buttons["Next"].exists, "the verse page must offer Next")
+        XCTAssertTrue(app.buttons["New Verse"].exists, "the verse page must offer a new verse")
+        XCTAssertTrue(app.buttons["Copy verse"].exists, "the verse page must offer a copy action")
+        // The Listen control is revealed by the bar's headphones icon, and is not
+        // on the page until it is asked for — which is the whole point of putting
+        // it behind a toggle.
+        XCTAssertFalse(app.buttons["quran.listen.action"].exists, "Listen must be hidden until the reader asks for it")
+        app.buttons["quran.listen.toggle"].tap()
+        XCTAssertTrue(
+            app.buttons["quran.listen.action"].waitForExistence(timeout: 5),
+            "the headphones icon must reveal the Listen control"
+        )
+        // ...and a second tap puts it away again.
+        app.buttons["quran.listen.toggle"].tap()
+        XCTAssertFalse(app.buttons["quran.listen.action"].exists, "a second tap must hide it")
+    }
+
+    /// The Islamic date sits under the verse with its adjustment target, and the
+    /// sheet that opens offers exactly the three choices the rule allows.
+    func testIslamicDateOffersTheThreeAdjustments() {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Quran Reminder"].waitForExistence(timeout: listTimeout))
+
+        app.buttons["Adjust Islamic date"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["One day back"].waitForExistence(timeout: 10), "the sheet must offer -1")
+        XCTAssertTrue(app.staticTexts["The calculated date"].exists, "the sheet must offer the calculated date")
+        XCTAssertTrue(app.staticTexts["One day forward"].exists, "the sheet must offer +1")
+        app.staticTexts["The calculated date"].tap()
+        XCTAssertFalse(app.staticTexts["One day forward"].exists, "choosing must close the sheet")
+    }
+
+    /// The bell is the one place the app's notifications live, and the Quran leg
+    /// states the reminder's cadence rather than counting towards the badge.
+    func testNotificationsSheetStatesTheReminderCadence() {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Quran Reminder"].waitForExistence(timeout: listTimeout))
+
+        app.buttons["quran.notifications"].tap()
+        XCTAssertTrue(app.staticTexts["Quran reminders"].waitForExistence(timeout: 10), "the sheet must group by kind")
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Refreshes automatically every'")).firstMatch.exists,
+            "the Quran leg must state the cadence"
+        )
+    }
+
     // MARK: - Helpers
+
+    /// The launch arguments for a test that needs a known starting point.
+    ///
+    /// `--uitesting` keeps the app off the network for identity, and
+    /// `--reset-preferences` clears the reader's own state first: the Arabic text
+    /// scale, the bookmarks and the reading positions all survive a launch, so a
+    /// run that left the scale at its largest would change the layout of the next
+    /// one and fail it for a reason that has nothing to do with the app.
+    private static let cleanLaunch = ["--uitesting", "--reset-preferences"]
 
     /// Opens a surah and scrolls it back to its top.
     ///
@@ -183,9 +347,49 @@ final class QuranTabUITests: XCTestCase {
         )
     }
 
+    /// The ayah the reader is actually looking at: the smallest-numbered `surah:n`
+    /// label currently on screen.
+    private func topVisibleAyah(in app: XCUIApplication, surah: Int) -> String? {
+        let prefix = "\(surah):"
+        return app.staticTexts.allElementsBoundByIndex
+            .filter { $0.isHittable && $0.label.hasPrefix(prefix) }
+            .compactMap { element -> (String, Int)? in
+                guard let number = Int(element.label.dropFirst(prefix.count)) else { return nil }
+                return (element.label, number)
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+    }
+
+    /// Scrolls until `label` is on screen (or gives up, and the caller's assertion
+    /// says so).
+    private func scrollUntilOnScreen(_ label: String, in app: XCUIApplication) {
+        for _ in 0..<12 where !app.staticTexts[label].isHittable {
+            app.swipeUp()
+        }
+    }
+
+    /// Opens a surah from the verse page's own search route, leaving it wherever
+    /// the reader opens it.
+    private func openSurah(_ name: String, in app: XCUIApplication) -> Bool {
+        let search = app.buttons["quran.search"]
+        if search.waitForExistence(timeout: listTimeout) { search.tap() }
+        let row = app.staticTexts[name]
+        guard row.waitForExistence(timeout: listTimeout) else { return false }
+        row.tap()
+        return app.navigationBars[name].waitForExistence(timeout: 30)
+    }
+
     private func openSurahAtTop(_ name: String, in app: XCUIApplication) -> Bool {
-        if app.navigationBars["Quran Reminder"].exists {
-            app.navigationBars.buttons["Browse Quran"].tap()
+        // The Quran tab opens on the verse page, whose own bar carries the
+        // magnifier that opens the surah list — the same route Android's reader
+        // takes (Quran tab → search/surah/bookmarks).
+        //
+        // Waited on rather than checked: a cold launch has the verse page blank
+        // for as long as the download takes, and a bare `exists` here would skip
+        // the tap and report the surah list as missing.
+        if app.buttons["quran.search"].waitForExistence(timeout: listTimeout) {
+            app.buttons["quran.search"].tap()
         }
         let row = app.staticTexts[name]
         guard row.waitForExistence(timeout: listTimeout) else { return false }

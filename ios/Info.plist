@@ -13,6 +13,11 @@
             <array><string>clearview</string></array>
         </dict>
     </array>
+    <key>UIAppFonts</key>
+    <array>
+        <string>digitalkhatt_indopak.otf</string>
+        <string>scheherazade_new.ttf</string>
+    </array>
     <key>GoodPostBaseURL</key>
     <string>https://clearview-1neb.onrender.com</string>
     <key>FirebaseAPIKey</key>

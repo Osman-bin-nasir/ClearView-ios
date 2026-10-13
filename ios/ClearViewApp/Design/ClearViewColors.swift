@@ -34,13 +34,37 @@ extension Color {
     static let cvSurface = Color.cvAdaptive(dark: 0x0F1514, light: 0xFAFCFB)
     static let cvOnSurface = Color.cvAdaptive(dark: 0xDDE4E3, light: 0x171D1C)
 
+    // ── Secondary (the tonal fill) ────────────────────────────────────────
+    // The second accent family: what a tonal button, a chip and a selected row
+    // are painted with when the action is not the page's primary one.
+    static let cvSecondary = Color.cvAdaptive(dark: 0xB1CCC7, light: 0x4A635F)
+    static let cvOnSecondary = Color.cvAdaptive(dark: 0x1C3531, light: 0xFFFFFF)
+    static let cvSecondaryContainer = Color.cvAdaptive(dark: 0x334B48, light: 0xCCE8E3)
+    static let cvOnSecondaryContainer = Color.cvAdaptive(dark: 0xCCE8E3, light: 0x06201D)
+
+    // ── Tertiary ──────────────────────────────────────────────────────────
+    static let cvTertiary = Color.cvAdaptive(dark: 0xABCAE6, light: 0x43617A)
+    static let cvOnTertiary = Color.cvAdaptive(dark: 0x11334B, light: 0xFFFFFF)
+    static let cvTertiaryContainer = Color.cvAdaptive(dark: 0x2A4A62, light: 0xC9E6FF)
+    static let cvOnTertiaryContainer = Color.cvAdaptive(dark: 0xC9E6FF, light: 0x001E31)
+
     // ── Cards ─────────────────────────────────────────────────────────────
-    // The three container levels the feed and sheets are built from, so a card
-    // reads as a card without a heavy border. Kept as separate tokens because
-    // the Android side uses them separately.
+    // The container levels the feed and sheets are built from, so a card reads
+    // as a card without a heavy border. Kept as separate tokens because the
+    // Android side uses them separately.
+    static let cvSurfaceContainerLowest = Color.cvAdaptive(dark: 0x0B100F, light: 0xFFFFFF)
     static let cvSurfaceContainerLow = Color.cvAdaptive(dark: 0x131A19, light: 0xF4F8F6)
     static let cvSurfaceContainer = Color.cvAdaptive(dark: 0x171F1E, light: 0xEEF3F1)
     static let cvSurfaceContainerHigh = Color.cvAdaptive(dark: 0x1D2625, light: 0xE7EEEC)
+    static let cvSurfaceContainerHighest = Color.cvAdaptive(dark: 0x232D2C, light: 0xE0E9E6)
+    static let cvSurfaceVariant = Color.cvAdaptive(dark: 0x3F4947, light: 0xD8E3DF)
+    static let cvSurfaceBright = Color.cvAdaptive(dark: 0x353F3E, light: 0xFCFEFD)
+    static let cvSurfaceDim = Color.cvAdaptive(dark: 0x0F1514, light: 0xDBE2DF)
+    /// The tint a Material surface is raised with where the platform draws one.
+    static let cvSurfaceTint = Color.cvAdaptive(dark: 0x63DACB, light: 0x00695C)
+    static let cvInverseSurface = Color.cvAdaptive(dark: 0xDDE4E3, light: 0x2C3231)
+    static let cvInverseOnSurface = Color.cvAdaptive(dark: 0x2C3231, light: 0xDDE4E3)
+    static let cvScrim = Color.black
 
     // ── Text and lines ────────────────────────────────────────────────────
     static let cvOnSurfaceVariant = Color.cvAdaptive(dark: 0xBEC9C7, light: 0x3F4947)
@@ -49,6 +73,9 @@ extension Color {
 
     // ── Status ────────────────────────────────────────────────────────────
     static let cvError = Color.cvAdaptive(dark: 0xFFB4AB, light: 0xB3261E)
+    static let cvOnError = Color.cvAdaptive(dark: 0x690005, light: 0xFFFFFF)
+    static let cvErrorContainer = Color.cvAdaptive(dark: 0x93000A, light: 0xFFDAD6)
+    static let cvOnErrorContainer = Color.cvAdaptive(dark: 0xFFDAD6, light: 0x410002)
 
     /// One token, two literals — resolved by the system from the appearance.
     fileprivate static func cvAdaptive(dark: UInt32, light: UInt32) -> Color {
@@ -58,7 +85,35 @@ extension Color {
     }
 }
 
-private extension UIColor {
+extension UIColor {
+
+    /// The bottom bar's container: the theme's own `surface` at 62% opacity, on
+    /// top of a transparent bar.
+    ///
+    /// Android builds its navigation bar this way — `surface.copy(alpha = 0.62f)`
+    /// on a `NavigationBar` — so the page colour reads *through* the bar instead
+    /// of the bar sitting on the page as a slab. UIKit wants a `UIColor`, which
+    /// is why these three live here rather than being taken from the SwiftUI
+    /// tokens: `UIColor(Color)` resolves against the trait collection of the
+    /// moment it is called, not the view's, which is the wrong answer for a bar
+    /// that must re-resolve on every appearance change.
+    static let cvBarContainer = UIColor.cvDynamic(dark: 0x0F1514, light: 0xFAFCFB, alpha: 0.62)
+
+    /// The selected item's tint: the accent, in both schemes.
+    static let cvBarSelected = UIColor.cvDynamic(dark: 0x63DACB, light: 0x00695C)
+
+    /// The unselected item's tint: `onSurfaceVariant`.
+    static let cvBarUnselected = UIColor.cvDynamic(dark: 0xBEC9C7, light: 0x3F4947)
+
+    /// One token, two literals, resolved by the system from the appearance — the
+    /// UIColor twin of `Color.cvAdaptive`.
+    fileprivate static func cvDynamic(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> UIColor {
+        UIColor { traits in
+            let base = traits.userInterfaceStyle == .dark ? UIColor(cvRGB: dark) : UIColor(cvRGB: light)
+            return base.withAlphaComponent(alpha)
+        }
+    }
+
     /// `0xRRGGBB`, the same literal form the Kotlin palette uses, so the two
     /// files can be diffed line by line when a colour changes.
     convenience init(cvRGB rgb: UInt32) {

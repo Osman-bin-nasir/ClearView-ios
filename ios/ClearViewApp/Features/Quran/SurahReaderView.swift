@@ -68,6 +68,11 @@ struct SurahReaderView: View {
                 }
             }
             .task { await model.load() }
+            // On EVERY appearance, not just the first: SwiftUI may hand this screen
+            // back with its state intact when the same surah is opened again in the
+            // same session, and the reading position it read then is not the one the
+            // store holds now.
+            .onAppear { model.refreshRestorePosition() }
     }
 
     @ViewBuilder
@@ -128,53 +133,148 @@ private struct ReaderContent: View {
     let onToggleBookmark: (Int32) -> Void
     let onTopAyahChanged: (Int32) -> Void
 
-    /// The id of the view at the top of the scroll view — the header (id 0) or an
-    /// ayah's number. `scrollPosition(id:)` keeps this up to date, which is how
-    /// the reader notices where it is; `ScrollViewReader` drives it back, which is
-    /// how it opens where it left off.
-    @State private var topItem: Int32?
+    /// The rows currently on screen, so the reader can tell where it is. The
+    /// header is 0 and an ayah is its own number.
+    ///
+    /// Tracked from the rows' own appear/disappear rather than from
+    /// `scrollPosition(id:)`, which only works inside a `ScrollView`. It is a
+    /// `List` here deliberately — see `body`.
+    @State private var visibleRows: Set<Int32> = []
+
+    /// The pending "the reader is at the top of the surah" write. Held so it can be
+    /// withdrawn — by a scroll away from the top, or by the page closing.
+    @State private var pendingClear: Task<Void, Never>?
+
+    /// Whether the scroll view is genuinely at its very top.
+    ///
+    /// Read from the scroll geometry rather than guessed from which rows are on
+    /// screen, because that is the one signal a page being taken apart does not
+    /// fake: removing the reader collapses its rows and reports the top of the
+    /// surah through them, but it stops reporting a scroll position altogether.
+    @State private var isAtScrollTop = true
+
+    /// The row at the top of the page: the smallest visible one that is not the
+    /// header. A nil answer means nothing has been laid out yet, which is not the
+    /// same as "the reader is at the top" and is not saved.
+    private var topRow: Int32? {
+        visibleRows.filter { $0 > 0 }.min()
+    }
 
     var body: some View {
+        // A `List`, not a `ScrollView` + `LazyVStack`.
+        //
+        // The reader has to open where it was left, and that is a scroll to an ayah
+        // that is usually nowhere near the top of the surah. A lazy stack cannot be
+        // scrolled to a row it has never built: `scrollTo` and even the
+        // `scrollPosition(id:)` binding were both dropped silently for a target
+        // twenty rows down, so a reader who left Al-Baqara at 2:13 reopened it at
+        // 2:1 — with the position saved correctly in the store the whole time, which
+        // is what proved the fault was the scroll rather than the record. `List` is
+        // backed by a real table view, whose `scrollTo` reaches any row, realized or
+        // not, and it is what Android's `LazyColumn.scrollToItem` does for the same
+        // reason.
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    SurahHeader(surah: surah)
-                        // Item 0 is the header — the top of the surah, which the
-                        // shared reading-position rule already reads as "save
-                        // nothing".
-                        .id(Int32(0))
-                    ForEach(ayahs) { ayah in
-                        AyahCard(
-                            ayah: ayah,
-                            arabicTextScale: arabicTextScale,
-                            isBookmarked: isBookmarked(ayah.verse.ayahNumber),
-                            onToggleBookmark: { onToggleBookmark(ayah.verse.ayahNumber) }
-                        )
-                        .id(ayah.id)
+            List {
+                SurahHeader(surah: surah)
+                    // Item 0 is the header — the top of the surah, which the shared
+                    // reading-position rule already reads as "save nothing".
+                    .id(Int32(0))
+                    .listRowModifiers()
+                    .onAppear { visibleRows.insert(0) }
+                    .onDisappear { visibleRows.remove(0) }
+
+                ForEach(ayahs) { ayah in
+                    AyahCard(
+                        ayah: ayah,
+                        arabicTextScale: arabicTextScale,
+                        isBookmarked: isBookmarked(ayah.verse.ayahNumber),
+                        onToggleBookmark: { onToggleBookmark(ayah.verse.ayahNumber) }
+                    )
+                    .id(ayah.id)
+                    .listRowModifiers()
+                    .onAppear { visibleRows.insert(ayah.id) }
+                    .onDisappear { visibleRows.remove(ayah.id) }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
+            .background(Color.cvBackground)
+            // Keyed by the target, so a position re-read on a later appearance
+            // re-anchors the page instead of being ignored because this task had
+            // already run once.
+            .task(id: restoreTo) {
+                guard let target = restoreTo else { return }
+                // One turn of the runloop later than the rows exist, and repeated
+                // because the first request can still land before the list has laid
+                // its rows out. A reader who has scrolled in the meantime simply
+                // re-anchors where they asked to be.
+                for attempt in 0..<5 {
+                    if attempt > 0 {
+                        try? await Task.sleep(nanoseconds: 60_000_000)
+                    }
+                    proxy.scrollTo(target, anchor: .top)
+                }
+            }
+            // Saved as the reader scrolls, with two different rules — because
+            // "where I am" and "I am back at the top" are not equally trustworthy.
+            //
+            // A scrolled-to ayah (2 or later) IS the reader's position, nothing else
+            // produces it, and it is saved the moment it becomes the top row.
+            //
+            // "The top of the surah" is saved only if the reader stays there. That
+            // is the one answer the page's own teardown also produces: removing the
+            // reader collapses the rows and momentarily reports the top of the
+            // surah, and saved, that reads as "clear the saved position" — which is
+            // how a reader who left at 2:12 came back to 2:1. A half-second of
+            // patience costs a reader nothing (they are looking at the top of the
+            // surah either way) and the pending write is cancelled if the reader
+            // scrolls on or closes the page, which is exactly what a teardown is.
+            .onChange(of: visibleRows) { _, rows in
+                guard let top = rows.filter({ $0 > 0 }).min() else { return }
+                if top >= 2 {
+                    pendingClear?.cancel()
+                    onTopAyahChanged(top)
+                } else if isAtScrollTop {
+                    pendingClear?.cancel()
+                    pendingClear = Task {
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        guard !Task.isCancelled, isAtScrollTop else { return }
+                        onTopAyahChanged(top)
                     }
                 }
-                .scrollTargetLayout()
-                .padding()
             }
-            .scrollPosition(id: $topItem)
-            .background(Color.cvBackground)
-            .task {
-                guard let target = restoreTo else { return }
-                // `proxy.scrollTo` rather than writing `topItem`, and one turn of
-                // the runloop later than the rows are created. `scrollTo` walks
-                // the LazyVStack to an id that may be far outside the viewport —
-                // which a binding write cannot do, because the target view does
-                // not exist yet for it to scroll to.
-                await Task.yield()
-                proxy.scrollTo(target, anchor: .top)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y <= 1
+            } action: { _, atTop in
+                isAtScrollTop = atTop
+                // Arriving at the top by scrolling is the reader saying "start me
+                // here next time", so it is recorded once the page settles.
+                if atTop, let top = visibleRows.filter({ $0 > 0 }).min() {
+                    pendingClear?.cancel()
+                    pendingClear = Task {
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        guard !Task.isCancelled, isAtScrollTop else { return }
+                        onTopAyahChanged(top)
+                    }
+                }
             }
-            .onChange(of: topItem) { _, newValue in
-                // nil means the scroll view has not resolved a position yet, not
-                // that the reader is at the top — so it is not saved.
-                guard let newValue else { return }
-                onTopAyahChanged(newValue)
-            }
+            .onDisappear { pendingClear?.cancel() }
         }
+    }
+}
+
+private extension View {
+    /// The list-row chrome a reader should not see: no separator, no inset, no
+    /// background of its own, so a row of scripture looks exactly as it did in the
+    /// scroll view this replaced.
+    func listRowModifiers() -> some View {
+        self
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .padding(.horizontal)
+            .padding(.vertical, 6)
     }
 }
 

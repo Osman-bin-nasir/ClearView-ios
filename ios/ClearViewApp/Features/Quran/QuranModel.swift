@@ -54,6 +54,35 @@ final class QuranModel {
 
     let repository: QuranRepository
 
+    /// The reader's own state: bookmarks, the Arabic text scale, the Ramadan-style
+    /// Islamic-date adjustment and the reminder interval. The same store the
+    /// Android hub reads, under the same preference keys.
+    private let store = QuranStore()
+    private let islamicDateStore = IslamicDateStore()
+
+    /// Whether the copy currently on the page is bookmarked — what the top bar's
+    /// bookmark icon draws itself from. Android keeps this on the hub and
+    /// refreshes it whenever the verse changes, because a single icon that
+    /// disagreed with the list would be the bug a reader notices first.
+    private(set) var isBookmarked = false
+
+    /// The reader's scale factor for the Arabic text (1.0 is the default size).
+    /// Every Arabic surface reads it, so "make the Quran text bigger" moves them
+    /// together and none is left behind.
+    private(set) var arabicTextScale: Double = QuranStore.Default.arabicTextScale
+
+    /// The ±1 day adjustment to the calculated Umm al-Qura date.
+    private(set) var islamicDateAdjustment = 0
+
+    /// Whether the Listen control is showing. Hidden by default: the headphones
+    /// icon in the top bar reveals it, so the verse page stays a reading page
+    /// until the reader asks to hear it.
+    var showVerseListen = false
+
+    /// The reminder interval, in hours, between automatic new verses — the cadence
+    /// the notifications sheet states and the picker in Settings sets.
+    private(set) var refreshIntervalHours = QuranStore.Default.refreshIntervalHours
+
     /// Guards against re-entering the download from `.task` on every redraw —
     /// SwiftUI calls it again whenever the view's identity changes, and a
     /// duplicate call would re-run a 2 MB fetch.
@@ -61,6 +90,57 @@ final class QuranModel {
 
     init(repository: QuranRepository = QuranRepository()) {
         self.repository = repository
+        self.arabicTextScale = store.arabicTextScale
+        self.islamicDateAdjustment = IslamicDateStore().adjustmentDays
+        self.refreshIntervalHours = store.refreshIntervalHours
+        self.isBookmarked = false
+    }
+
+    // MARK: - The reader's state
+
+    /// Toggles the bookmark on the verse currently shown, and keeps the top-bar
+    /// icon honest. Returns the new state so the caller can say what happened.
+    @discardableResult
+    func toggleBookmark() -> Bool {
+        guard let verse = currentVerse else { return false }
+        let added = store.toggleBookmark(surahNumber: verse.surahNumber, ayahNumber: verse.ayahNumber)
+        isBookmarked = added
+        return added
+    }
+
+    /// Re-reads the bookmark state for the verse on the page. Called whenever the
+    /// verse changes, for the reason the Android hub calls it there: the icon is
+    /// about THIS verse, so it has to be re-answered when this verse changes.
+    func refreshBookmarkState() {
+        guard let verse = currentVerse else {
+            isBookmarked = false
+            return
+        }
+        isBookmarked = store.isBookmarked(surahNumber: verse.surahNumber, ayahNumber: verse.ayahNumber)
+    }
+
+    /// Sets and persists the Arabic Quran text scale. Clamped by the store, which
+    /// is the one place that cannot be forgotten by a future caller.
+    func setArabicTextScale(_ scale: Double) {
+        store.arabicTextScale = scale
+        arabicTextScale = store.arabicTextScale
+    }
+
+    /// Sets and persists the ±1 day Islamic-date adjustment.
+    func setIslamicDateAdjustment(_ days: Int) {
+        islamicDateStore.adjustmentDays = days
+        islamicDateAdjustment = islamicDateStore.adjustmentDays
+    }
+
+    /// The verse exactly as it should be sent to the clipboard — Android's
+    /// `formatVerseForSharing`/`copyVerseToClipboard` pair, which put the Arabic
+    /// above the translation and the reference last.
+    func clipboardText(for verse: QuranVerse) -> String {
+        var parts: [String] = []
+        if !verse.arabicText.isEmpty { parts.append(verse.arabicText) }
+        parts.append(verse.text)
+        parts.append("\(verse.surahName) — Quran \(verse.surahNumber):\(verse.ayahNumber)")
+        return parts.joined(separator: "\n\n")
     }
 
     func load() async {
@@ -80,6 +160,7 @@ final class QuranModel {
             currentVerse = try await repository.pickRandomVerse()
             currentVerseSurah = surahSummary(for: currentVerse)
             verseError = nil
+            refreshBookmarkState()
             await refreshStepAvailability()
         } catch {
             verseError = Self.message(for: error)
@@ -102,6 +183,7 @@ final class QuranModel {
             currentVerse = moved
             currentVerseSurah = surahSummary(for: moved)
             verseError = nil
+            refreshBookmarkState()
             await refreshStepAvailability()
         } catch {
             verseError = Self.message(for: error)
@@ -152,6 +234,7 @@ final class QuranModel {
         }
         currentVerse = stored
         currentVerseSurah = surahSummary(for: stored, in: surahs)
+        refreshBookmarkState()
         await refreshStepAvailability()
     }
 
