@@ -28,9 +28,24 @@ final class MediaPlayerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["media.player.mute"].exists)
         XCTAssertTrue(app.sliders["media.player.timeline"].exists)
         capture("Embedded player controls", app: app)
+        // Audio mode is a real pipeline now — it resolves an audio-only stream and opens the
+        // player — so the alert that declared the capability unavailable is asserted ABSENT
+        // rather than expected. This assertion changed with the behaviour, by request: it used
+        // to pin "audio extraction is not available in this iOS build", which is no longer true.
+        //
+        // The player itself is deliberately NOT required here. Resolving a stream is
+        // network-bound and YouTube refuses datacenter addresses, so on a runner the honest
+        // outcome is either the player or a stated error — and requiring the player would make
+        // this test flaky for a reason that has nothing to do with the app. What IS required is
+        // that the app stops claiming the capability does not exist. Device-level extraction is
+        // covered by MediaAudioLiveTests, which is skipped unless asked for.
         app.buttons["Audio mode"].tap()
-        XCTAssertTrue(app.alerts["YouTube playback limitation"].waitForExistence(timeout: 5))
-        app.alerts.buttons["OK"].tap()
+        XCTAssertFalse(
+            app.alerts["YouTube playback limitation"].waitForExistence(timeout: 5),
+            "Audio mode must not report the capability as unavailable"
+        )
+        // Clear anything the tap presented before the playlist steps below.
+        if app.buttons["Done"].waitForExistence(timeout: 2) { app.buttons["Done"].tap() }
         app.buttons["media.player.playlist"].tap()
         XCTAssertTrue(app.navigationBars["Add to Playlist"].waitForExistence(timeout: 5))
         app.buttons["Create playlist"].tap()
