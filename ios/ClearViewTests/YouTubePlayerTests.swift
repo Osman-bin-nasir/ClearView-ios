@@ -29,6 +29,9 @@ final class YouTubePlayerTests: XCTestCase {
         XCTAssertTrue(player.playing)
         player.receive(["event": "snapshot", "state": 2])
         XCTAssertFalse(player.playing)
+        player.receive(["event": "blocked"])
+        player.receive(["event": "snapshot", "state": -1])
+        XCTAssertEqual(player.status, "Tap Play inside the YouTube player to start")
         player.receive(["event": "error", "code": 150])
         XCTAssertFalse(player.canSeek)
         XCTAssertTrue(player.error!.contains("does not allow"))
@@ -43,12 +46,14 @@ final class YouTubePlayerTests: XCTestCase {
             if !webView.isLoading { break }
             try await Task.sleep(for: .milliseconds(50))
         }
+        XCTAssertFalse(webView.isLoading)
         _ = try await webView.evaluateJavaScript("""
         var calls = [];
         var player = {pauseVideo:()=>calls.push('pause'), playVideo:()=>calls.push('play'),
           mute:()=>calls.push('mute'), unMute:()=>calls.push('unmute'),
           seekTo:(value)=>calls.push('seek:'+value), setPlaybackRate:(value)=>calls.push('rate:'+value)};
         function snapshot() {}
+        true;
         """)
         player.receive(["event": "ready"])
         player.receive(["event": "snapshot", "position": 5.0, "duration": 90.0, "state": 2, "muted": false, "rates": [1.0, 1.5]])

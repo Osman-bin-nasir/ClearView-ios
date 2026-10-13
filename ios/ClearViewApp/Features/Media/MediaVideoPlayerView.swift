@@ -87,8 +87,8 @@ struct MediaVideoPlayerView: View {
                 Button(library.state.saved.contains { $0.id == video.id } ? "Remove from saved videos" : "Save video", systemImage: "bookmark") { library.toggleSave(video) }
                 Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
                 Button("Reload player", systemImage: "arrow.clockwise") { player.reload() }
-            } label: { actionLabel("More", symbol: "ellipsis", vertical: true) }
-            ShareLink(item: video.url) { actionLabel("Share", symbol: "square.and.arrow.up") }
+            } label: { actionLabel("More", symbol: "ellipsis", vertical: true) }.accessibilityIdentifier("media.player.more")
+            ShareLink(item: video.url) { actionLabel("Share", symbol: "square.and.arrow.up") }.accessibilityIdentifier("media.player.share")
             Button { showSpeed.toggle() } label: { actionLabel("Speed", symbol: "speedometer") }.accessibilityIdentifier("media.player.speed")
             Button { showPlaylists = true } label: { actionLabel("Playlist", symbol: "text.badge.plus") }.accessibilityLabel("Add to Playlist").accessibilityIdentifier("media.player.playlist")
         }.buttonStyle(.plain)
@@ -134,6 +134,7 @@ struct MediaVideoPlayerView: View {
                 .accessibilityIdentifier("media.player.playPause")
             transportButton("Forward 10 seconds", symbol: "goforward.10", enabled: player.canSeek && video.live != true) { player.skip(10) }
             transportButton(player.muted ? "Unmute" : "Mute", symbol: player.muted ? "speaker.slash.fill" : "speaker.wave.2.fill", enabled: player.ready && player.error == nil) { player.toggleMute() }
+                .accessibilityIdentifier("media.player.mute")
             transportButton("Audio mode", symbol: "headphones", enabled: true) {
                 limitation = "You can listen while the video remains visible here. Background or audio-only YouTube playback is not supported by the embedded player; leaving this screen pauses playback."
             }

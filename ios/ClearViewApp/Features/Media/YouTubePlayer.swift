@@ -15,6 +15,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
     private(set) var rates: [Double] = []
     private(set) var error: String?
     private(set) var status = "Loading YouTube player…"
+    private var requiresDirectPlay = false
     @ObservationIgnored weak var webView: WKWebView?
 
     var canSeek: Bool { ready && duration > 0 && error == nil }
@@ -49,6 +50,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
         case "ready":
             ready = true
             error = nil
+            requiresDirectPlay = false
             status = "Tap Play to start"
         case "snapshot":
             if let value = data["position"] as? Double, value.isFinite { position = max(0, value) }
@@ -60,14 +62,16 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
                 playing = state == 1
                 buffering = state == 3
                 switch state {
-                case 1: status = "Playing"
+                case 1: requiresDirectPlay = false; status = "Playing"
                 case 2: status = "Paused"
                 case 3: status = "Buffering…"
                 case 0: status = "Finished"
-                default: status = "Tap Play to start"
+                default: status = requiresDirectPlay ? "Tap Play inside the YouTube player to start" : "Tap Play to start"
                 }
             }
-        case "blocked": status = "Tap Play inside the YouTube player to start"
+        case "blocked":
+            requiresDirectPlay = true
+            status = "Tap Play inside the YouTube player to start"
         case "error":
             playing = false
             buffering = false
@@ -121,7 +125,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
         }
         function onYouTubeIframeAPIReady() {
           player = new YT.Player('player', {width:'100%',height:'100%',videoId:config.videoId,
-            playerVars:{playsinline:1,controls:1,autoplay:0,start:config.start,
+            playerVars:{playsinline:1,controls:1,autoplay:1,start:config.start,
               origin:config.origin,widget_referrer:config.origin},
             events:{onReady:()=>{send('ready');snapshot();},onStateChange:snapshot,
               onPlaybackRateChange:snapshot,onAutoplayBlocked:()=>send('blocked'),

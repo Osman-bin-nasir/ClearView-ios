@@ -6,7 +6,7 @@ final class MediaPlayerUITests: XCTestCase {
     private func launchVideo() throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--reset-preferences"]
-        let video: [String: Any] = ["id": "M7lc1UVf-VE", "title": "YouTube IFrame API Demo", "channel": "YouTube Developers", "url": "https://www.youtube.com/watch?v=M7lc1UVf-VE", "isShort": false, "publishedAt": 0]
+        let video: [String: Any] = ["id": "M7lc1UVf-VE", "title": "YouTube IFrame API Demo", "channel": "YouTube Developers", "url": "https://www.youtube.com/watch?v=M7lc1UVf-VE", "isShort": false, "publishedAt": Int64(Date().timeIntervalSince1970 * 1000)]
         let state: [String: Any] = ["channels": [], "playlists": [], "recent": [], "saved": [], "feed": [video]]
         app.launchEnvironment["CLEARVIEW_MEDIA_FIXTURE"] = String(decoding: try JSONSerialization.data(withJSONObject: state), as: UTF8.self)
         app.launch()
@@ -20,9 +20,12 @@ final class MediaPlayerUITests: XCTestCase {
 
     func testVideoPageControlsAndLocalPlaylist() throws {
         let app = try launchVideo()
-        for label in ["More", "Share", "Speed", "Back 10 seconds", "Play", "Forward 10 seconds", "Mute", "Audio mode"] {
+        for label in ["Back 10 seconds", "Forward 10 seconds", "Audio mode"] {
             XCTAssertTrue(app.buttons[label].exists, label)
         }
+        for identifier in ["more", "share", "speed"] { XCTAssertTrue(app.buttons["media.player.\(identifier)"].exists) }
+        XCTAssertTrue(app.buttons["media.player.playPause"].exists)
+        XCTAssertTrue(app.buttons["media.player.mute"].exists)
         XCTAssertTrue(app.sliders["media.player.timeline"].exists)
         capture("Embedded player controls", app: app)
         app.buttons["Audio mode"].tap()
@@ -56,7 +59,7 @@ final class MediaPlayerUITests: XCTestCase {
             capture("YouTube embed unavailable on CI network", app: app)
             throw XCTSkip("Real YouTube player did not become ready on this runner. Live playback still requires device verification.")
         }
-        play.tap()
+        if play.label == "Play" { play.tap() }
         let playing = app.staticTexts["media.player.status"]
         let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Playing'"), object: playing)], timeout: 30)
         guard started == .completed else {
@@ -64,7 +67,8 @@ final class MediaPlayerUITests: XCTestCase {
             throw XCTSkip("YouTube loaded but playback was blocked on this runner. Verify the user-gesture player on an iPhone.")
         }
         XCTAssertTrue(app.buttons["Pause"].exists)
-        app.buttons["Mute"].tap()
+        if app.buttons["media.player.mute"].label == "Unmute" { app.buttons["media.player.mute"].tap() }
+        app.buttons["media.player.mute"].tap()
         XCTAssertTrue(app.buttons["Unmute"].waitForExistence(timeout: 5))
         app.buttons["Forward 10 seconds"].tap()
         app.buttons["Speed"].tap()
