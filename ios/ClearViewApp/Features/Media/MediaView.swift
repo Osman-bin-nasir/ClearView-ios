@@ -45,12 +45,6 @@ struct MediaView: View {
                     }
                     if library.loading { ProgressView().frame(maxWidth: .infinity) }
                     if let error = library.error { CVErrorBanner(message: error) { Task { await library.refresh() } } }
-                    if let currentChannel, currentChannel.platform != "youtube" {
-                        CVCard {
-                            Text("\(currentChannel.platformLabel) feed integration is not available in this iOS build.").font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
-                            Button("Open channel") { browser = BrowserDestination(currentChannel.url) }.buttonStyle(.bordered)
-                        }
-                    }
                     if !continuing.isEmpty && !searchOpen && filter.content != .downloads {
                         sectionTitle("Continue Watching")
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -72,17 +66,34 @@ struct MediaView: View {
                         }
                     }
                     sectionTitle(filter.content == .downloads ? "Downloads" : "Videos")
-                    LazyVStack(spacing: 12) {
-                        ForEach(videos.filter { !$0.isShort }) { video in videoRow(video) }
-                    }
-                    if videos.isEmpty && !library.loading {
-                        CVEmptyState(title: search.isEmpty ? "No videos to show" : "No results", message: emptyMessage, symbol: "play.rectangle")
+                    if filter.content == .downloads {
+                        DownloadsSection()
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(videos.filter { !$0.isShort }) { video in videoRow(video) }
+                        }
+                        if videos.isEmpty && !library.loading {
+                            CVEmptyState(title: search.isEmpty ? "No videos to show" : "No results", message: emptyMessage, symbol: "play.rectangle")
+                        }
                     }
                 }.padding(.horizontal, 16).padding(.vertical, 12)
             }.background(Color.cvBackground).navigationTitle("Media")
                 .toolbar(.visible, for: .tabBar)
                 .refreshable { await library.refresh() }
-                .task { await library.refresh() }
+                .task {
+                    // Wire background-audio watch progress into THIS library. The
+                    // controller outlives any one view, so it writes progress
+                    // through a sink rather than holding the library itself —
+                    // hence the weak capture, which keeps the singleton from
+                    // keeping a torn-down tab's library alive.
+                    AudioPlaybackController.shared.progressSink = { [weak library] videoId, position, duration in
+                        guard let library,
+                              let video = (library.state.feed + library.state.saved).first(where: { $0.id == videoId })
+                        else { return }
+                        library.recordProgress(video, position: position, duration: duration)
+                    }
+                    await library.refresh()
+                }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
                 .sheet(isPresented: $showAdd) { AddMediaLinkView(library: library) }
                 .sheet(isPresented: $showAddChannel) { AddMediaChannelView(library: library) }
@@ -305,9 +316,8 @@ struct MediaView: View {
     }
 
     private var emptyMessage: String {
-        if filter.content == .downloads { return "Downloads and device import are not connected in this iOS build. Web videos remain available in your feed." }
-        if filter.platform == .instagram || filter.platform == .x { return "\(filter.platform.label) feed loading is not connected yet. You can open saved profiles from the channel row." }
-        return search.isEmpty ? "Try changing the filters or add a channel using +." : "Try a different channel name or video title."
+        if search.isEmpty { return "Try changing the filters or add a channel using +." }
+        return "Try a different channel name or video title."
     }
 
     private func uniqueVideos(_ videos: [LibraryVideo]) -> [LibraryVideo] {

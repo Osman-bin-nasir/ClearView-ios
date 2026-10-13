@@ -8,6 +8,10 @@ struct MediaVideoPlayerView: View {
     @State private var showSpeed = false
     @State private var showPlaylists = false
     @State private var limitation: String?
+    @State private var downloads = AudioDownloads.shared
+    @State private var audioPreparing = false
+    @State private var audioError: String?
+    @State private var showAudioPlayer = false
     @State private var scrubbing = false
     @State private var scrubPosition: Double = 0
     @State private var lastSaved = Date.distantPast
@@ -45,13 +49,10 @@ struct MediaVideoPlayerView: View {
                     timeline
                     transport
                     if video.live != true {
-                        Button {
-                            limitation = "YouTube's embedded player does not provide audio downloads. Audio extraction and offline playback are not available in this iOS build."
-                        } label: {
-                            Label("Download Audio", systemImage: "arrow.down.to.line")
-                                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 15)
-                                .background(Color.cvSurfaceVariant, in: Capsule())
-                        }.buttonStyle(.plain).accessibilityIdentifier("media.player.downloadAudio")
+                        downloadAudioButton
+                        if let audioError {
+                            Text(audioError).font(.footnote).foregroundStyle(Color.cvError)
+                        }
                     }
                     if let error = player.error {
                         Text(error).font(.footnote).foregroundStyle(Color.cvError)
@@ -68,6 +69,7 @@ struct MediaVideoPlayerView: View {
             .toolbar(.visible, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
             .sheet(isPresented: $showPlaylists) { MediaPlaylistPicker(video: video, library: library) }
+            .sheet(isPresented: $showAudioPlayer) { AudioPlayerView() }
             .alert("YouTube playback limitation", isPresented: Binding(get: { limitation != nil }, set: { if !$0 { limitation = nil } })) {
                 Button("OK", role: .cancel) { limitation = nil }
             } message: { Text(limitation ?? "") }
@@ -136,9 +138,9 @@ struct MediaVideoPlayerView: View {
             transportButton("Forward 10 seconds", symbol: "goforward.10", enabled: player.canSeek && video.live != true) { player.skip(10) }
             transportButton(player.muted ? "Unmute" : "Mute", symbol: player.muted ? "speaker.slash.fill" : "speaker.wave.2.fill", enabled: player.ready && player.error == nil) { player.toggleMute() }
                 .accessibilityIdentifier("media.player.mute")
-            transportButton("Audio mode", symbol: "headphones", enabled: true) {
-                limitation = "You can listen while the video remains visible here. Background or audio-only YouTube playback is not supported by the embedded player; leaving this screen pauses playback."
-            }
+            transportButton(audioPreparing ? "Preparing audio" : "Audio mode", symbol: "headphones", enabled: !audioPreparing) {
+                Task { await startAudioMode() }
+            }.accessibilityIdentifier("media.player.audioMode")
         }.padding(.vertical, 4)
     }
 
@@ -152,6 +154,80 @@ struct MediaVideoPlayerView: View {
               force || Date().timeIntervalSince(lastSaved) >= 5 else { return }
         library.recordProgress(video, position: player.position, duration: player.duration)
         lastSaved = Date()
+    }
+
+    // MARK: - Audio
+
+    /// Starts background playback for this video: the downloaded file when there
+    /// is one, otherwise a freshly resolved audio-only stream.
+    ///
+    /// The saved file is preferred deliberately — it is guaranteed playable and
+    /// costs no network — and it is also why "Audio mode" works on a plane for a
+    /// video that was downloaded.
+    private func startAudioMode() async {
+        guard !audioPreparing else { return }
+        audioError = nil
+        let controller = AudioPlaybackController.shared
+
+        if let fileURL = downloads.fileURL(for: video.id) {
+            controller.playLocal(videoId: video.id, title: video.title, channel: video.channel,
+                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: start)
+            showAudioPlayer = true
+            return
+        }
+
+        audioPreparing = true
+        defer { audioPreparing = false }
+        do {
+            let extracted = try await YouTubeAudioExtractor().extractAudio(videoId: video.id)
+            controller.playStream(videoId: video.id, title: video.title, channel: video.channel,
+                                  artworkURL: video.thumbnail, streamURL: extracted.url, startAt: start)
+            showAudioPlayer = true
+        } catch {
+            audioError = error.localizedDescription
+        }
+    }
+
+    /// The Download Audio control, in whichever of its four states applies:
+    /// not downloaded, resolving, downloading with progress, already saved.
+    @ViewBuilder
+    private var downloadAudioButton: some View {
+        let item = downloads.item(for: video.id)
+        let update = downloads.progress[video.id]
+        if let item {
+            HStack {
+                Label("Downloaded", systemImage: "checkmark.circle.fill")
+                    .font(.headline).foregroundStyle(Color.cvPrimary)
+                Spacer()
+                Button("Remove", role: .destructive) { downloads.remove(item) }.font(.subheadline.bold())
+            }
+            .padding(.vertical, 15).padding(.horizontal, 18)
+            .background(Color.cvSurfaceVariant, in: Capsule())
+            .accessibilityIdentifier("media.player.downloaded")
+        } else if let update {
+            VStack(spacing: 8) {
+                if update.fraction < 0 {
+                    ProgressView()
+                } else {
+                    ProgressView(value: update.fraction)
+                }
+                HStack {
+                    Text(update.phase == .resolving ? "Finding the audio…" : "Downloading…")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    Spacer(minLength: 8)
+                    Button("Cancel", role: .destructive) { downloads.cancel(video.id) }.font(.caption.bold())
+                }
+            }
+            .padding(14)
+            .background(Color.cvSurfaceVariant, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityIdentifier("media.player.downloading")
+        } else {
+            Button { downloads.download(video) } label: {
+                Label("Download Audio", systemImage: "arrow.down.to.line")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 15)
+                    .background(Color.cvSurfaceVariant, in: Capsule())
+            }.buttonStyle(.plain).accessibilityIdentifier("media.player.downloadAudio")
+        }
     }
 
     static func time(_ seconds: Double) -> String {

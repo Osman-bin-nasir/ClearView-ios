@@ -14,12 +14,39 @@ struct LibraryVideo: Codable, Identifiable, Hashable {
     var durationSeconds: Int64?
     var live: Bool?
 
+    /// The source platform (`YOUTUBE`, `INSTAGRAM`, `X`).
+    ///
+    /// Optional so that libraries written before the Instagram and X feeds
+    /// existed still decode; a missing value falls back to the URL's host, which
+    /// is what the old code did for every item. It has to be *stored* rather than
+    /// re-derived, because a non-YouTube item's `url` is its permalink and an
+    /// Instagram permalink is indistinguishable from a saved link otherwise.
+    var platform: String?
+    /// The original permalink for Instagram and X items.
+    var sourceURL: String?
+    /// `InstagramMediaType` raw value, when the source said.
+    var instagramType: String?
+    /// The direct media URL (an Instagram or X mp4), when known.
+    var mediaURL: String?
+    /// The post's full text — the whole caption or tweet body.
+    var bodyText: String?
+
     init(_ video: MediaVideo) {
         id = video.videoId
         title = video.title
         channel = video.channelName
-        url = "https://www.youtube.com/watch?v=\(video.videoId)"
-        thumbnail = video.thumbnailUrl
+        platform = video.platform.rawValue
+        sourceURL = video.sourceUrl ?? video.instagramUrl
+        instagramType = video.instagramType?.rawValue
+        mediaURL = video.mediaUrl
+        bodyText = video.bodyText
+        // Only a YouTube item gets a watch URL synthesised from its id; any
+        // other platform's id is not a YouTube id and minting one would make the
+        // player try to play a video that does not exist.
+        url = video.platform == .youTube
+            ? "https://www.youtube.com/watch?v=\(video.videoId)"
+            : (video.sourceUrl ?? video.instagramUrl ?? video.mediaUrl ?? "")
+        thumbnail = video.thumbnailUrl.isEmpty ? nil : video.thumbnailUrl
         isShort = video.isShort
         publishedAt = video.publishedAtEpochMillis
         channelID = video.channelId
@@ -36,12 +63,21 @@ struct LibraryVideo: Codable, Identifiable, Hashable {
         self.thumbnail = thumbnail
     }
 
+    /// True when this item came from YouTube.
+    var isYouTube: Bool { (platform ?? MediaPlatform.youTube.rawValue).uppercased() == MediaPlatform.youTube.rawValue }
+
     var mediaVideo: MediaVideo {
         let host = URL(string: url)?.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? ""
-        let platform: MediaPlatform = host == "instagram.com" ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube
+        let resolved: MediaPlatform = platform.flatMap(MediaPlatform.init(rawValue:))
+            ?? (host == "instagram.com" ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube)
         return MediaVideo(videoId: id, title: title, channelId: channelID ?? "", channelName: channel,
             publishedAtEpochMillis: publishedAt, thumbnailUrl: thumbnail ?? "", viewCount: viewCount ?? 0,
-            isShort: isShort, isLive: live ?? false, durationSeconds: durationSeconds ?? 0, platform: platform, sourceUrl: url)
+            isShort: isShort, isLive: live ?? false, durationSeconds: durationSeconds ?? 0, platform: resolved,
+            instagramType: instagramType.flatMap(InstagramMediaType.init(rawValue:)),
+            mediaUrl: mediaURL,
+            instagramUrl: resolved == .instagram ? sourceURL : nil,
+            sourceUrl: sourceURL ?? url,
+            bodyText: bodyText ?? "")
     }
 }
 
@@ -177,31 +213,84 @@ final class MediaLibrary {
         defer { loading = false }
         error = nil
         await loadDirectory()
-        let sources = state.channels.filter { $0.platform == "youtube" }
+        let sources = state.channels
         guard !sources.isEmpty else {
             state.feed = []
             persist()
             return
         }
-        let results = await withTaskGroup(of: (String, [LibraryVideo]?).self) { group in
-            for channel in sources {
-                group.addTask { (channel.id, await Self.fetch(channel)) }
-            }
-            var collected: [(String, [LibraryVideo]?)] = []
-            for await result in group { collected.append(result) }
-            return collected
-        }
         var videos: [LibraryVideo] = []
         var failed = 0
-        for (_, result) in results {
-            if let result { videos += result } else { failed += 1 }
+
+        // YouTube concurrently: an RSS feed per channel, and the endpoints do
+        // not mind a burst.
+        let youtube = sources.filter { $0.platform == "youtube" }
+        if !youtube.isEmpty {
+            let results = await withTaskGroup(of: (String, [LibraryVideo]?).self) { group in
+                for channel in youtube {
+                    group.addTask { (channel.id, await Self.fetch(channel)) }
+                }
+                var collected: [(String, [LibraryVideo]?)] = []
+                for await result in group { collected.append(result) }
+                return collected
+            }
+            for (_, result) in results {
+                if let result { videos += result } else { failed += 1 }
+            }
         }
-        if failed == 0 || !videos.isEmpty {
-            var seen = Set<String>()
-            state.feed = videos.filter { seen.insert($0.id).inserted }.sorted { $0.publishedAt > $1.publishedAt }
+
+        // Instagram and X SEQUENTIALLY, deliberately. Both endpoints rate-limit
+        // per IP and answer 429 to a burst, which is exactly what a profile per
+        // channel fired at once produces — Android learned the same lesson and
+        // made these sources sequential and memoised for the same reason. One
+        // 429 also stands the whole source down for a few minutes, so a retry
+        // here would only spend the request to be told the same thing.
+        var fetchedOthers: [LibraryVideo] = []
+        var firstFailure: String?
+        for channel in sources where channel.platform != "youtube" {
+            do {
+                fetchedOthers += try await Self.fetchSource(channel)
+            } catch {
+                failed += 1
+                // Keep the FIRST concrete reason. "1 channel feed couldn't
+                // refresh" is not actionable on its own — the reader cannot tell
+                // a typo'd handle from a throttled service from a video that was
+                // deleted, and neither can whoever they ask for help.
+                if firstFailure == nil {
+                    firstFailure = "\(channel.displayName): \(error.localizedDescription)"
+                }
+            }
+        }
+
+        // YouTube is REPLACED (its feed is the channel's current uploads), while
+        // Instagram and X ACCUMULATE: both hand back only the newest few posts,
+        // so replacing would throw away everything older on every refresh. Keeping
+        // the older items is how the feed grows past the embed's rolling window.
+        let existingOthers = state.feed.filter { !$0.isYouTube }
+        var seen = Set<String>()
+        let merged = (videos + fetchedOthers + existingOthers).filter { seen.insert($0.id).inserted }
+        if failed == 0 || !merged.isEmpty {
+            state.feed = merged.sorted { $0.publishedAt > $1.publishedAt }
             persist()
         }
-        if failed > 0 { error = "\(failed) channel feed\(failed == 1 ? "" : "s") couldn't refresh. You can still open channels directly." }
+        if failed > 0 {
+            error = "\(failed) channel feed\(failed == 1 ? "" : "s") couldn't refresh. "
+                + (firstFailure ?? "You can still open channels directly.")
+        }
+    }
+
+    /// Fetches a channel from whichever platform it belongs to, throwing the
+    /// reason so the caller can report it rather than only counting it.
+    nonisolated private static func fetchSource(_ channel: DirectoryChannel) async throws -> [LibraryVideo] {
+        switch channel.platform.lowercased() {
+        case "instagram":
+            return try await InstagramSource().fetchProfile(channel.handle).items.map { LibraryVideo($0) }
+        case "x", "twitter":
+            return try await XSource().fetchProfile(channel.handle).items.map { LibraryVideo($0) }
+        default:
+            guard let videos = await fetch(channel) else { throw MediaFeedError.unusablePayload }
+            return videos
+        }
     }
 
     nonisolated private static func fetch(_ channel: DirectoryChannel) async -> [LibraryVideo]? {
