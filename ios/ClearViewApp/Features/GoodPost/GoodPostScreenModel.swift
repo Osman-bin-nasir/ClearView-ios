@@ -13,7 +13,17 @@ final class GoodPostScreenModel {
     var savedIDs: Set<String>
     var followedIDs: Set<String> = []
     var pendingFollows: Set<String> = []
+    var session: AdminSession?
+    var ownedChannels: [GoodPostChannel] = []
+    var channelAds: [GoodPostAd] = []
     private let defaults: UserDefaults
+
+    var canCreateChannel: Bool { session == nil || session?.isSuperAdmin == true }
+
+    var homeChannels: [GoodPostChannel] {
+        let ownedIDs = Set(ownedChannels.map(\.id))
+        return ownedChannels + channels.filter { followedIDs.contains($0.id) && !ownedIDs.contains($0.id) }
+    }
 
     init(repository: GoodPostRepository = GoodPostRepository(), defaults: UserDefaults = .standard) {
         self.repository = repository
@@ -27,6 +37,14 @@ final class GoodPostScreenModel {
         defer { loading = false }
         if channels.isEmpty, let cached = await repository.cachedChannels() { channels = cached.channels }
         followedIDs = await repository.cachedFollowedIds()
+        if !more {
+            session = await repository.adminSession()
+            if session == nil { ownedChannels = [] }
+            else if let owned = await repository.adminChannels().value { ownedChannels = owned }
+            session = await repository.adminSession()
+            if let cached = await repository.cachedAds(placement: .channels) { channelAds = cached.ads }
+            if let ads = await repository.ads(placement: .channels).value { channelAds = ads }
+        }
         let result = await repository.channels(cursor: more ? nextCursor : nil)
         if let page = result.value {
             if more {
@@ -40,13 +58,17 @@ final class GoodPostScreenModel {
         if await repository.identifiesReaders, !more {
             var cursor: String?
             var followed: [GoodPostChannel] = []
+            var completed = true
             repeat {
                 let result = await repository.following(cursor: cursor)
-                guard let page = result.value else { break }
+                guard let page = result.value else { completed = false; break }
                 followed += page.items
                 cursor = page.nextCursor
             } while cursor != nil && !Task.isCancelled
-            followedIDs.formUnion(followed.map(\.id))
+            if completed && !Task.isCancelled { followedIDs = Set(followed.map(\.id)) }
+            else { followedIDs.formUnion(followed.map(\.id)) }
+            let followedByID = Dictionary(followed.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            channels = channels.map { followedByID[$0.id] ?? $0 }
             let existing = Set(channels.map(\.id))
             channels += followed.filter { !existing.contains($0.id) }
         }
@@ -54,7 +76,10 @@ final class GoodPostScreenModel {
 
     func toggleSaved(_ channel: GoodPostChannel) {
         if savedIDs.contains(channel.id) { savedIDs.remove(channel.id) }
-        else { savedIDs.insert(channel.id) }
+        else {
+            savedIDs.insert(channel.id)
+            if !channels.contains(where: { $0.id == channel.id }) { channels.append(channel) }
+        }
         defaults.set(Array(savedIDs), forKey: "goodpost.savedChannels")
     }
 
@@ -68,8 +93,18 @@ final class GoodPostScreenModel {
         if let follow = result.value {
             if follow.following { followedIDs.insert(channel.id) }
             else { followedIDs.remove(channel.id) }
+            if follow.following && !channels.contains(where: { $0.id == channel.id }) { channels.append(channel) }
             message = nil
         } else { message = result.userMessage }
+    }
+
+    func signOut() async {
+        let previousSession = session
+        await repository.forgetAdminSession()
+        session = nil
+        ownedChannels = []
+        await repository.creatorSignOut()
+        if let previousSession { await repository.revokeAdminSession(refreshToken: previousSession.refreshToken) }
     }
 }
 

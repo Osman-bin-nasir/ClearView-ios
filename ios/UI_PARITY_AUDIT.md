@@ -21,7 +21,7 @@ and the supplied screenshots remain the source of truth.
 | Video/audio player | `media/ui/VideoPlayerScreen.kt`, `AudioPlayerScreen.kt` | Embedded YouTube iframe; Android-order actions, timeline, transport, genuine progress capture, and local playlist picker. Audio-only/background playback, extraction/downloads, and device import are explicitly unavailable. |
 | Haramayn | `media/ui/LiveTab.kt`, `media/data/LiveStreamConfig.kt` | Makkah/Madinah destinations and official live-channel entry points added. Embedded live resolver pending. |
 | Directory | `directory/ui/ChannelDirectoryScreen.kt`, `media/ui/ChannelDirectorySheet.kt` | Existing real API directory retained; further category/subcategory layout refinement pending. |
-| Good Post | `goodpost/ui/GoodPostHome.kt`, `GoodPostExplore.kt`, `GoodPostDiscover.kt` | Following-channel rows, role menus, advertisement carousel, and category discovery are the next UI phase. |
+| Good Post | `goodpost/ui/GoodPostHome.kt`, `GoodPostExplore.kt`, `GoodPostDiscover.kt` | Compact followed/owned channel rows, search/overflow toolbar, Explore pill, actual advertisement carousel, sectioned discovery, separate Follow controls, and server-backed category search/sorting/paging implemented. Visual verification deferred to the user. |
 | More / productivity | `ui/ContentHub.kt`, `todo/ui/TodoScreen.kt`, `quran/ui/DhikrCounterScreen.kt` | Existing tools retained. More layout and Todo statistics/calendar/editor parity pending. |
 | Administrator | `goodpost/ui/GoodPostAds.kt`, `GoodPostBrainRot.kt`, `GoodPostDirectory.kt` | Existing repository endpoints are available; dedicated role-gated management UI pending. |
 
