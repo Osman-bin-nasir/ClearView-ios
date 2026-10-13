@@ -94,7 +94,7 @@ final class QuranTabUITests: XCTestCase {
         // Relaunched WITHOUT the reset: a reading position surviving a relaunch is
         // the whole point of this test, and a clean slate would erase what is being
         // asserted.
-        app.launchArguments = Self.cleanLaunch
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         // The app opens on the verse page, so the surah list is reached the way a
