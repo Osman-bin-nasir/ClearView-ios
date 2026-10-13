@@ -46,12 +46,14 @@ struct FocusTimerView: View {
 
     private func start() async {
         endTimestamp = Date().timeIntervalSince1970 + Double(duration * 60)
+        let scheduledEnd = endTimestamp
         let center = UNUserNotificationCenter.current()
         do {
             guard try await center.requestAuthorization(options: [.alert, .sound]) else {
                 notificationNote = "Notifications are off. Your timer still runs here."
                 return
             }
+            guard endTimestamp == scheduledEnd else { return }
             let content = UNMutableNotificationContent()
             content.title = "A moment well spent"
             content.body = "Your ClearView focus session is complete."

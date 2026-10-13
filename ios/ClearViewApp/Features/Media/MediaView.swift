@@ -129,6 +129,9 @@ struct MediaDirectoryView: View {
     @Bindable var library: MediaLibrary
     @State private var search = ""
     @State private var browser: BrowserDestination?
+    @State private var showAdd = false
+    @State private var channelURL = ""
+    @State private var invalidChannel = false
 
     var body: some View {
         ScrollView {
@@ -148,6 +151,18 @@ struct MediaDirectoryView: View {
                 if library.directory.allChannels.isEmpty { CVEmptyState(title: "No channels yet", message: "Pull to refresh the directory.", symbol: "person.2") }
             }.padding(20)
         }.background(Color.cvBackground).navigationTitle("Channel directory").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button { showAdd = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add channel by URL") }
+            .alert("Add a channel", isPresented: $showAdd) {
+                TextField("Channel profile URL", text: $channelURL).textInputAutocapitalization(.never)
+                Button("Add") {
+                    if library.addChannel(url: channelURL) { channelURL = "" }
+                    else { invalidChannel = true }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Paste a YouTube, Instagram, or X profile link. YouTube uploads appear in your feed; other profiles open directly.") }
+            .alert("Check the channel link", isPresented: $invalidChannel) {
+                Button("OK", role: .cancel) {}
+            } message: { Text("Use a channel profile link, such as https://www.youtube.com/@safinasociety.") }
             .searchable(text: $search).task { await library.loadDirectory() }
             .refreshable { await library.loadDirectory() }
             .sheet(item: $browser) { BrowserSheet(url: $0.url) }

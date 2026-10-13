@@ -96,6 +96,8 @@ struct AppSettingsView: View {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                     }
                 }
+                Text("While the app is closed, reminders repeat the last loaded verse. Open ClearView to refresh it.")
+                    .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
             }
             Section("About ClearView") {
                 LabeledContent("Version", value: "1.0")

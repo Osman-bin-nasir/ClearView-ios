@@ -165,6 +165,7 @@ struct PostComposerView: View {
             Form {
                 Section("Posting to \(channel.name)") {
                     TextField("Share something good…", text: $text, axis: .vertical).lineLimit(8...16)
+                    Text("\(text.count) / 4000").font(.caption).foregroundStyle(text.count > 4000 ? Color.cvError : Color.cvOnSurfaceVariant)
                     TextField("Link (optional)", text: $link).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 Section("Attachments") {
@@ -183,7 +184,7 @@ struct PostComposerView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Publish") { confirmPublish = true }.disabled(busy || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && link.isEmpty && attachments.isEmpty))
+                        Button("Publish") { confirmPublish = true }.disabled(busy || text.count > 4000 || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && link.isEmpty && attachments.isEmpty))
                     }
                 }
                 .interactiveDismissDisabled(busy)
@@ -214,9 +215,11 @@ struct PostComposerView: View {
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         do {
             let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
-            guard let type = values.contentType, let mime = type.preferredMIMEType else { message = "Unsupported file type."; return }
-            let kind = type.conforms(to: .image) ? "image" : type.conforms(to: .movie) ? "video" : "document"
-            let attachment = GoodPostAttachment(fileURL: url, kind: kind, contentType: mime, byteSize: Int64(values.fileSize ?? 0), fileName: url.lastPathComponent)
+            guard (values.fileSize ?? 0) <= 104_857_600 else { message = "Choose a file smaller than 100 MB."; return }
+            guard let attachment = await readGoodPostAttachment(at: url, declaredContentType: values.contentType?.preferredMIMEType) else {
+                message = "This file is empty or its format isn't supported."
+                return
+            }
             let result = await repository.adminUploadMedia(attachment: attachment)
             if let media = result.value { attachments.append(media); message = nil }
             else { message = result.userMessage }

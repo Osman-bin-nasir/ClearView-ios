@@ -77,7 +77,11 @@ final class MediaLibrary {
         error = nil
         await loadDirectory()
         let sources = state.channels.filter { $0.platform == "youtube" }
-        guard !sources.isEmpty else { return }
+        guard !sources.isEmpty else {
+            state.feed = []
+            persist()
+            return
+        }
         let results = await withTaskGroup(of: (String, [LibraryVideo]?).self) { group in
             for channel in sources {
                 group.addTask { (channel.id, await Self.fetch(channel)) }
@@ -125,6 +129,33 @@ final class MediaLibrary {
         if state.channels.contains(where: { $0.id == channel.id }) { state.channels.removeAll { $0.id == channel.id } }
         else { state.channels.append(channel) }
         persist()
+    }
+
+    func addChannel(url raw: String) -> Bool {
+        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host?.lowercased().replacingOccurrences(of: "www.", with: "") else { return false }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard let first = parts.first, !first.isEmpty else { return false }
+        let platform: String
+        switch host {
+        case "youtube.com":
+            guard first.hasPrefix("@") || (first == "channel" && parts.count == 2 && parts[1].hasPrefix("UC")) else { return false }
+            platform = "youtube"
+        case "instagram.com":
+            guard parts.count == 1, !["p", "reel", "explore"].contains(first) else { return false }
+            platform = "instagram"
+        case "x.com", "twitter.com":
+            guard parts.count == 1, !["home", "explore", "search"].contains(first) else { return false }
+            platform = "x"
+        default: return false
+        }
+        let handle = first == "channel" ? parts[1] : first.replacingOccurrences(of: "@", with: "")
+        guard !state.channels.contains(where: { $0.platform == platform && $0.handle.lowercased() == handle.lowercased() }) else { return true }
+        state.channels.append(DirectoryChannel(id: UUID().uuidString, platform: platform, handle: handle, name: handle,
+            iconUrl: nil, url: url.absoluteString, categoryId: nil, subcategoryId: nil, sort: 0))
+        persist()
+        return true
     }
 
     func open(_ video: LibraryVideo) {

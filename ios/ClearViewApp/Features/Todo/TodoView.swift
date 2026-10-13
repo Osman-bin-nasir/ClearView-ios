@@ -43,7 +43,7 @@ final class TodoScreenModel {
     }
 
     func remove(_ item: TodoItem) {
-        items = TodoCodec.removedWithHistory(items, id: item.id)
+        items = TodoCodec.removed(items, id: item.id)
         store.saveItems(items)
     }
 }
