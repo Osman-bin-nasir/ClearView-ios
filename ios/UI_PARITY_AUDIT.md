@@ -18,7 +18,7 @@ and the supplied screenshots remain the source of truth.
 | Filters | `media/ui/FilterSheet.kt`, `media/util/FeedFilters.kt` | Existing Swift rules reused; six collapsible groups, draft state, Reset/Apply, platform normalization, inclusive custom dates. |
 | Safina Society | `media/data/MediaRepository.kt: DEFAULT_CHANNEL` | Android's real default channel, seeded only on first initialization. Existing empty subscriptions are not reseeded. |
 | Playlists | `media/ui/MediaTab.kt: PlaylistsSheet` | Existing local create/add/remove flows retained. URL imports and detailed edit/search/filter parity pending. |
-| Video/audio player | `media/ui/VideoPlayerScreen.kt`, `AudioPlayerScreen.kt` | Playback still opens the platform page. Embedded controls, progress capture, device import, and downloads pending. |
+| Video/audio player | `media/ui/VideoPlayerScreen.kt`, `AudioPlayerScreen.kt` | Embedded YouTube iframe; Android-order actions, timeline, transport, genuine progress capture, and local playlist picker. Audio-only/background playback, extraction/downloads, and device import are explicitly unavailable. |
 | Haramayn | `media/ui/LiveTab.kt`, `media/data/LiveStreamConfig.kt` | Makkah/Madinah destinations and official live-channel entry points added. Embedded live resolver pending. |
 | Directory | `directory/ui/ChannelDirectoryScreen.kt`, `media/ui/ChannelDirectorySheet.kt` | Existing real API directory retained; further category/subcategory layout refinement pending. |
 | Good Post | `goodpost/ui/GoodPostHome.kt`, `GoodPostExplore.kt`, `GoodPostDiscover.kt` | Following-channel rows, role menus, advertisement carousel, and category discovery are the next UI phase. |
@@ -35,7 +35,7 @@ and the supplied screenshots remain the source of truth.
 - Opening Safari is not evidence that a video was watched. Recently opened remains
   in the feed menu. Continue Watching only renders stored, valid progress and
   excludes Shorts, live streams, hidden videos, and hidden All Feed channels.
-  Genuine progress capture awaits the embedded-player phase.
+  Embedded playback now records real player position/duration, throttled to five seconds with pause/exit flushes.
 - Existing Media JSON migrates through optional fields without deleting saved
   videos, playlists, or subscriptions. Unknown durations/timestamps are omitted.
 - Device import reports the missing integration instead of fabricating success.

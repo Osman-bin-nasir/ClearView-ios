@@ -6,6 +6,7 @@ struct MediaView: View {
     @State private var search = ""
     @State private var searchOpen = false
     @State private var browser: BrowserDestination?
+    @State private var playingVideo: LibraryVideo?
     @State private var showAdd = false
     @State private var showChannels = false
     @State private var showAddChannel = false
@@ -13,8 +14,6 @@ struct MediaView: View {
     @State private var showFilters = false
     @State private var showHiddenVideos = false
     @State private var showHiddenChannels = false
-    @State private var showSaved = false
-    @State private var showRecent = false
     @State private var unavailable: String?
     @State private var pendingRemoval: DirectoryChannel?
     @State private var filter = FeedFilter()
@@ -91,8 +90,9 @@ struct MediaView: View {
                 .sheet(isPresented: $showFilters) { MediaFilterSheet(filter: filter) { filter = $0 } }
                 .sheet(isPresented: $showHiddenVideos) { videoCollection("Hidden videos", videos: (library.state.feed + library.state.saved).filter { (library.state.hiddenVideoIDs ?? []).contains($0.id) && (selectedChannel == nil || $0.channelID == selectedChannel) }, hidden: true) }
                 .sheet(isPresented: $showHiddenChannels) { hiddenChannels }
-                .sheet(isPresented: $showSaved) { videoCollection("Saved videos", videos: library.state.saved) }
-                .sheet(isPresented: $showRecent) { videoCollection("Recently opened", videos: library.state.recent) }
+                .navigationDestination(item: $playingVideo) { video in
+                    if let reference = YouTubeLink.parse(video.url) { MediaVideoPlayerView(video: video, reference: reference, library: library) }
+                }
                 .alert("Not available yet", isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
                     Button("OK", role: .cancel) { unavailable = nil }
                 } message: { Text(unavailable ?? "") }
@@ -116,13 +116,10 @@ struct MediaView: View {
             Spacer(minLength: 0)
             Button { searchOpen.toggle(); if !searchOpen { search = "" } } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44) }.accessibilityLabel("Search media").accessibilityIdentifier("media.search")
             Menu {
-                Button("Hidden videos", systemImage: "eye.slash") { showHiddenVideos = true }
-                Button("Hidden channels", systemImage: "person.crop.circle.badge.xmark") { showHiddenChannels = true }
-                Button("Add video by URL", systemImage: "link") { showAdd = true }
-                Button("Add video from device", systemImage: "folder") { unavailable = "Device video import is not connected yet. You can add web videos by URL." }
-                Divider()
-                Button("Saved videos", systemImage: "bookmark") { showSaved = true }
-                Button("Recently opened", systemImage: "clock") { showRecent = true }
+                Button("Hidden Videos", systemImage: "eye.slash") { showHiddenVideos = true }
+                Button("Hidden Channels", systemImage: "person.crop.circle.badge.xmark") { showHiddenChannels = true }
+                Button("Add Video by URL", systemImage: "link") { showAdd = true }
+                Button("Add Video from Device", systemImage: "folder") { unavailable = "Device video import is not connected yet. You can add web videos by URL." }
             } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 44, height: 44) }.accessibilityLabel("Feed options")
             Button { showFilters = true } label: {
                 Image(systemName: "line.3.horizontal.decrease").foregroundStyle(filter.isActive ? Color.cvPrimary : Color.cvOnSurfaceVariant).frame(width: 44, height: 44)
@@ -300,7 +297,11 @@ struct MediaView: View {
             .accessibilityLabel("Options for \(video.title)")
     }
 
-    private func open(_ video: LibraryVideo) { library.open(video); browser = BrowserDestination(video.url) }
+    private func open(_ video: LibraryVideo) {
+        library.open(video)
+        if YouTubeLink.parse(video.url) != nil { playingVideo = video }
+        else { browser = BrowserDestination(video.url) }
+    }
 
     private var emptyMessage: String {
         if filter.content == .downloads { return "Downloads and device import are not connected in this iOS build. Web videos remain available in your feed." }
@@ -423,7 +424,7 @@ struct AddMediaLinkView: View {
                     TextField("Title (optional)", text: $title)
                     TextField("https://…", text: $url).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Text("YouTube, Instagram, X, and other web links open in the in-app browser.").font(.footnote)
+                Text("YouTube videos play inside ClearView. Other web links open in the in-app browser.").font(.footnote)
                 if invalid { Text("Enter a valid http or https link.").foregroundStyle(Color.cvError) }
             }.navigationTitle("Add video by URL").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -442,6 +443,7 @@ struct MediaPlaylistsView: View {
     @State private var showCreate = false
     @State private var name = ""
     @State private var browser: BrowserDestination?
+    @State private var playingVideo: LibraryVideo?
 
     var body: some View {
         NavigationStack {
@@ -453,7 +455,11 @@ struct MediaPlaylistsView: View {
                 ForEach(library.state.playlists) { playlist in
                     NavigationLink {
                         List(playlist.videos) { video in
-                            Button { library.open(video); browser = BrowserDestination(video.url) } label: {
+                            Button {
+                                library.open(video)
+                                if YouTubeLink.parse(video.url) != nil { playingVideo = video }
+                                else { browser = BrowserDestination(video.url) }
+                            } label: {
                                 Label(video.title, systemImage: "play.circle")
                             }.contextMenu {
                                 Button("Remove from playlist", role: .destructive) {
@@ -484,6 +490,9 @@ struct MediaPlaylistsView: View {
                     Button("Cancel", role: .cancel) {}
                 }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
+                .navigationDestination(item: $playingVideo) { video in
+                    if let reference = YouTubeLink.parse(video.url) { MediaVideoPlayerView(video: video, reference: reference, library: library) }
+                }
         }.tint(.cvPrimary)
     }
 }
