@@ -1,0 +1,11 @@
+# Xcode per-user state — never shared or committed.
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Build products and Xcode's derived data.
+DerivedData/
+build/
+
+.DS_Store
