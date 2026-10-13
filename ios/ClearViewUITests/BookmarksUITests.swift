@@ -52,6 +52,7 @@ final class BookmarksUITests: XCTestCase {
     func testBookmarkedVerseIsReachableAndOpensAtThatVerse() {
         let app = XCUIApplication()
         app.launch()
+        app.navigationBars.buttons["Browse Quran"].tap()
 
         // Al-Baqara: long enough that scrolling genuinely moves the top of the
         // page far from ayah 1, which is what makes the final assertion mean
@@ -124,6 +125,7 @@ final class BookmarksUITests: XCTestCase {
     func testStarredSurahAppearsOnBookmarksAndOpens() {
         let app = XCUIApplication()
         app.launch()
+        app.navigationBars.buttons["Browse Quran"].tap()
 
         let alFaatiha = app.staticTexts["Al-Faatiha"]
         XCTAssertTrue(alFaatiha.waitForExistence(timeout: listTimeout), "the surah list must appear")

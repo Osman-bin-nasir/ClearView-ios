@@ -237,7 +237,8 @@ enum GoodPostConfiguration {
     static let baseUrlKey = "GoodPostBaseURL"
 
     static var baseURL: String {
-        (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed ?? ""
+        (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed
+            ?? "https://clearview-1neb.onrender.com"
     }
 }
 

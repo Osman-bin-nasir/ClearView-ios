@@ -179,6 +179,9 @@ final class QuranTabUITests: XCTestCase {
     }
 
     private func openSurahAtTop(_ name: String, in app: XCUIApplication) -> Bool {
+        if app.navigationBars["Quran Reminder"].exists {
+            app.navigationBars.buttons["Browse Quran"].tap()
+        }
         let row = app.staticTexts[name]
         guard row.waitForExistence(timeout: listTimeout) else { return false }
 

@@ -1,4 +1,5 @@
 import Observation
+import Foundation
 
 /// The app's top-level navigation state.
 ///
@@ -27,4 +28,16 @@ final class Router {
     }
 
     var selectedTab: Tab = .quran
+    var channelSlug: String?
+
+    func open(_ url: URL) {
+        let parts = url.pathComponents.filter { $0 != "/" }
+        if url.scheme == "clearview", url.host == "goodpost", parts.first == "channel", parts.count == 2 {
+            selectedTab = .goodPost
+            channelSlug = parts[1]
+        } else if url.host == "clearview-1neb.onrender.com", parts.first == "c", parts.count == 2 {
+            selectedTab = .goodPost
+            channelSlug = parts[1]
+        }
+    }
 }

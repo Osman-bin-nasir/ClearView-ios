@@ -11,15 +11,17 @@ import SharedKotlin
 /// The tab is a list rather than a single "verse of the day", because that is
 /// what the Android tab opens onto; the reminder widget — which *is* a single
 /// verse — is a separate surface, and it reuses this same repository.
-struct QuranView: View {
+struct QuranLibraryView: View {
 
     @State private var model = QuranModel()
+    @State private var search = ""
 
     var body: some View {
-        NavigationStack {
+        Group {
             content
                 .background(Color.cvBackground)
                 .navigationTitle("Quran")
+                .searchable(text: $search, prompt: "Surah name or number")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
@@ -136,7 +138,7 @@ struct QuranView: View {
                         .padding(.bottom, 8)
                 }
 
-                List(surahs) { surah in
+                List(surahs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.translation.localizedCaseInsensitiveContains(search) || String($0.number) == search }) { surah in
                     NavigationLink(value: surah) {
                         SurahRow(surah: surah)
                     }
@@ -262,5 +264,5 @@ private struct SurahRow: View {
 }
 
 #Preview {
-    QuranView()
+    QuranLibraryView()
 }
