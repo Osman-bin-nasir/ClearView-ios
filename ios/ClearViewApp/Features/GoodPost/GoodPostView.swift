@@ -62,9 +62,14 @@ struct GoodPostView: View {
                     }
                 }.padding(.bottom, 24)
             }.background(Color.cvBackground)
-                .navigationTitle("Good Post").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("").navigationBarTitleDisplayMode(.inline)
                 .toolbar(.visible, for: .navigationBar)
+                .toolbarBackground(Color.cvBackground, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Text("Good Post").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
                             showSearch.toggle()
@@ -92,10 +97,7 @@ struct GoodPostView: View {
                                 Label("Channel directory", systemImage: "list.bullet.rectangle")
                             }
                             Button("Publisher studio", systemImage: "square.and.pencil") { showPublisher = true }
-                            // Role-gated by the server, not by this menu: a reader who never
-                            // signs in is never offered it, and one who is signed in without the
-                            // role gets the server's refusal rather than a hidden screen.
-                            if model.session != nil {
+                            if model.session?.isSuperAdmin == true {
                                 NavigationLink {
                                     GoodPostAdsView(repository: model.repository)
                                 } label: {
@@ -230,7 +232,7 @@ struct ChannelExploreView: View {
                                 .padding(.horizontal, 18).padding(.vertical, 11)
                                 .background(Color.cvSurfaceContainer, in: Capsule())
                         }.buttonStyle(.plain)
-                    }.padding(.horizontal, 16).padding(.top, 26).padding(.bottom, 12)
+                    }.padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 6)
                     if let message = discovery.errors[section] {
                         GoodPostNotice(message: message) { Task { await discovery.load(repository: model.repository) } }
                     } else if !discovery.loading && discovery.sections[section, default: []].isEmpty {
@@ -276,6 +278,10 @@ struct ChannelFeedView: View {
     /// and a feed of thirty messages asking thirty times is thirty decodes of the same file.
     @State private var starredIDs: Set<String> = []
 
+    private var visiblePosts: [GoodPostPost] {
+        feed.posts.reversed().filter { search.isEmpty || ($0.body ?? "").localizedCaseInsensitiveContains(search) }
+    }
+
     init(channel: GoodPostChannel, model: GoodPostScreenModel) {
         _channel = State(initialValue: channel)
         self.model = model
@@ -284,37 +290,23 @@ struct ChannelFeedView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                VStack(spacing: 12) {
-                    // The picture and the name open the channel's information page, which is
-                    // where its description, its media and its notification switch live — and
-                    // where its picture is changed from.
-                    NavigationLink {
-                        ChannelInfoView(channel: channel, model: model) { updated in channel = updated }
-                    } label: {
-                        VStack(spacing: 8) {
-                            CVAvatar(name: channel.name, url: channel.iconUrl, size: 80)
-                            Text(channel.name).font(.title2.bold())
-                            if let description = channel.description { Text(description).font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center).lineLimit(3) }
-                            Text(channel.followerCount == 1 ? "1 follower" : "\(channel.followerCount) followers")
-                                .font(.caption).foregroundStyle(Color.cvPrimary)
-                            Text("Channel info").font(.caption.bold()).foregroundStyle(Color.cvPrimary)
-                        }.frame(maxWidth: .infinity)
-                    }.buttonStyle(.plain)
-                    HStack {
-                        Button(model.followedIDs.contains(channel.id) ? "Following" : "Follow") {
-                            Task { await model.toggleFollow(channel) }
-                        }.buttonStyle(.borderedProminent).disabled(model.pendingFollows.contains(channel.id))
-                        Button { model.toggleSaved(channel) } label: {
-                            Image(systemName: model.savedIDs.contains(channel.id) ? "bookmark.fill" : "bookmark")
-                        }.buttonStyle(.bordered).accessibilityLabel(model.savedIDs.contains(channel.id) ? "Unsave channel" : "Save channel on this iPhone")
-                    }
-                }.padding(.vertical, 16).frame(maxWidth: .infinity)
-                if let message = model.message { CVErrorBanner(message: message) }
-                if let message = feed.message { CVErrorBanner(message: message) { Task { await feed.load() } } }
+            LazyVStack(alignment: .leading, spacing: 8) {
+                if let message = model.message { GoodPostNotice(message: message) { Task { await model.load() } } }
+                if let message = feed.message { GoodPostNotice(message: message) { Task { await feed.load() } } }
+                if feed.nextCursor != nil {
+                    Button("Earlier posts") { Task { await feed.load(more: true) } }
+                        .font(.subheadline.bold()).padding(12).background(Color.cvSurfaceContainer, in: Capsule())
+                        .disabled(feed.loading).frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
                 if feed.loading && feed.posts.isEmpty { ProgressView().frame(maxWidth: .infinity).padding() }
-                ForEach(feed.posts.filter { search.isEmpty || ($0.body ?? "").localizedCaseInsensitiveContains(search) }) { post in
-                    postCard(post)
+                ForEach(Array(visiblePosts.enumerated()), id: \.element.id) { index, post in
+                    if index == 0 || postDay(post) != postDay(visiblePosts[index - 1]) {
+                        Text(dayLabel(post)).font(.caption.weight(.semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Color.cvSurfaceContainerHigh, in: RoundedRectangle(cornerRadius: 8))
+                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    }
+                    postCard(post).padding(.horizontal, 10)
                 }
                 if !feed.loading && feed.posts.isEmpty {
                     CVEmptyState(
@@ -323,19 +315,47 @@ struct ChannelFeedView: View {
                         symbol: "text.bubble"
                     )
                 }
-                if feed.nextCursor != nil { Button("Earlier posts") { Task { await feed.load(more: true) } }.disabled(feed.loading).frame(maxWidth: .infinity) }
-            }.padding(20)
-        }.background(Color.cvBackground).navigationTitle(channel.name).navigationBarTitleDisplayMode(.inline)
+            }.padding(.vertical, 12)
+        }.defaultScrollAnchor(.bottom)
+            .background {
+                GeometryReader { geometry in
+                    Image("GoodPostChatBackground").resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                }.allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
+            .toolbarBackground(Color.cvBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .searchable(text: $search, prompt: "Search loaded posts")
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    NavigationLink {
+                        ChannelInfoView(channel: channel, model: model) { updated in channel = updated }
+                    } label: {
+                        HStack(spacing: 10) {
+                            CVAvatar(name: channel.name, url: channel.iconUrl, size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(channel.name).font(.headline).lineLimit(1)
+                                Text("Public channel").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                            }
+                        }
+                    }.buttonStyle(.plain).accessibilityLabel("Channel info for \(channel.name)")
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    ShareLink(item: channel.shareLink) { Image(systemName: "square.and.arrow.up") }
+                    ShareLink(item: channel.shareLink) { Image(systemName: "link") }
                     Menu {
                         NavigationLink { ChannelInfoView(channel: channel, model: model) { updated in channel = updated } } label: {
                             Label("Channel info", systemImage: "info.circle")
                         }
                         NavigationLink { GoodPostSavedChannelsView(model: model) } label: {
                             Label("Saved channels", systemImage: "bookmark")
+                        }
+                        Button(model.followedIDs.contains(channel.id) ? "Unfollow channel" : "Follow channel") {
+                            Task { await model.toggleFollow(channel) }
+                        }.disabled(model.pendingFollows.contains(channel.id))
+                        Button(model.savedIDs.contains(channel.id) ? "Unsave channel" : "Save channel") {
+                            model.toggleSaved(channel)
                         }
                         ShareLink(item: channel.shareLink) { Label("Share", systemImage: "square.and.arrow.up") }
                     } label: {
@@ -385,15 +405,25 @@ struct ChannelFeedView: View {
         }
     }
 
+    private func postDay(_ post: GoodPostPost) -> Date? {
+        guard let milliseconds = parseIsoMillis(post.createdAt) else { return nil }
+        return Calendar.current.startOfDay(for: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
+    }
+
+    private func dayLabel(_ post: GoodPostPost) -> String {
+        guard let date = postDay(post) else { return "Updates" }
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func timeLabel(_ post: GoodPostPost) -> String {
+        guard let milliseconds = parseIsoMillis(post.createdAt) else { return "" }
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000).formatted(date: .omitted, time: .shortened)
+    }
+
     private func postCard(_ post: GoodPostPost) -> some View {
-        CVCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    CVAvatar(name: channel.name, url: channel.iconUrl, size: 28)
-                    Text(channel.name).font(.caption.bold())
-                    Spacer()
-                    Text(String(post.createdAt.prefix(10))).font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
-                }
+            VStack(alignment: .leading, spacing: 12) {
                 if let body = post.body, !body.isEmpty { Text(body).font(.body).lineSpacing(5).textSelection(.enabled) }
                 ForEach(post.media) { media in
                     if let raw = media.url, let url = URL(string: raw) {
@@ -414,7 +444,8 @@ struct ChannelFeedView: View {
                         Label(post.linkTitle ?? link, systemImage: "arrow.up.right.square").font(.subheadline).lineLimit(2)
                     }
                 }
-                HStack(spacing: 12) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
                     ForEach(post.reactions, id: \.emoji) { reaction in
                         Button { Task { await feed.react(to: post, emoji: reaction.emoji) } } label: {
                             Text("\(reaction.emoji) \(reaction.count)").font(.caption)
@@ -426,21 +457,27 @@ struct ChannelFeedView: View {
                             ForEach(feed.emojiOptions, id: \.self) { emoji in Button(emoji) { Task { await feed.react(to: post, emoji: emoji) } } }
                         } label: { Image(systemName: "face.smiling").font(.caption) }.disabled(feed.reacting.contains(post.id))
                     }
-                    Spacer()
+                    }
+                }
+                HStack(spacing: 12) {
+                    Spacer(minLength: 0)
                     // A bookmark is private to this device, so it costs no request and writes
                     // nothing for anybody else.
                     Button { toggleStar(post) } label: {
                         Image(systemName: starredIDs.contains(post.id) ? "star.fill" : "star")
                             .font(.caption)
-                            .foregroundStyle(starredIDs.contains(post.id) ? Color.cvPrimary : Color.cvOnSurfaceVariant)
+                            .foregroundStyle(starredIDs.contains(post.id) ? Color.white : GoodPostFeedPalette.timestamp)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(starredIDs.contains(post.id) ? "Remove star" : "Star this message")
-                    Label("\(post.views)", systemImage: "eye").font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
+                    Label("\(post.views)", systemImage: "eye").font(.caption2)
+                    Text(timeLabel(post)).font(.caption2)
                     ShareLink(item: post.body ?? post.linkUrl ?? channel.shareLink) { Image(systemName: "square.and.arrow.up").font(.caption) }
-                }
+                }.foregroundStyle(GoodPostFeedPalette.timestamp)
             }
-        }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(Color.white).tint(.white)
+            .background(GoodPostFeedPalette.bubble, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -465,23 +502,31 @@ struct ChannelComposeBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            TextField("Write an update", text: $draft, axis: .vertical)
+            HStack(spacing: 12) {
+                TextField("Write an update", text: $draft, axis: .vertical)
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
                 .submitLabel(.return)
                 .accessibilityIdentifier("goodpost.channel.compose")
+                Button(action: onExpand) { Image(systemName: "paperclip").font(.title3) }
+                    .buttonStyle(.plain).accessibilityLabel("Attach media to an update")
+            }.padding(.horizontal, 16).padding(.vertical, 13)
+                .background(Color.cvSurfaceContainerHigh, in: RoundedRectangle(cornerRadius: 26))
             Button(action: onExpand) {
-                Image(systemName: "square.and.pencil").font(.body).foregroundStyle(Color.cvPrimary)
+                Image(systemName: "pencil").font(.title3.bold()).foregroundStyle(Color.cvOnPrimary)
+                    .frame(width: 48, height: 48).background(Color.cvPrimary, in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open the posting page for \(channelName)")
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.cvPrimary, lineWidth: 1.5))
-        .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 6)
+        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 6)
         .background(Color.cvBackground)
     }
+}
+
+private enum GoodPostFeedPalette {
+    static let bubble = Color(red: 51 / 255.0, green: 75 / 255.0, blue: 25 / 255.0)
+    static let timestamp = Color(red: 164 / 255.0, green: 184 / 255.0, blue: 152 / 255.0)
 }
 
 struct InlinePostVideo: View {

@@ -28,10 +28,11 @@ final class GoodPostDiscoveryModel {
 
 struct GoodPostChannelName: View {
     let channel: GoodPostChannel
+    var lineLimit = 1
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(channel.name).font(.headline).lineLimit(1)
+            Text(channel.name).font(.headline).lineLimit(lineLimit)
             if channel.verified {
                 Image(systemName: "checkmark.seal.fill").font(.subheadline)
                     .foregroundStyle(Color.cvPrimary).accessibilityLabel("Verified channel")
@@ -65,7 +66,7 @@ struct GoodPostDiscoverRow: View {
                 HStack(spacing: 12) {
                     CVAvatar(name: channel.name, url: channel.iconUrl, size: 49)
                     VStack(alignment: .leading, spacing: 7) {
-                        GoodPostChannelName(channel: channel)
+                        GoodPostChannelName(channel: channel, lineLimit: 2)
                         Text(channel.followerCount > 0
                             ? "\(channel.followerCount) \(channel.followerCount == 1 ? "follower" : "followers")"
                             : channel.categoryLabel ?? "Channel")
@@ -76,7 +77,7 @@ struct GoodPostDiscoverRow: View {
             Button { Task { await model.toggleFollow(channel) } } label: {
                 Text(following ? "Following" : "Follow").font(.subheadline.bold())
                     .foregroundStyle(following ? Color.primary : Color.cvOnPrimary)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .padding(.horizontal, 16).padding(.vertical, 10).fixedSize(horizontal: true, vertical: false)
                     .background(following ? Color.clear : Color.cvPrimary, in: Capsule())
                     .overlay(Capsule().stroke(following ? Color.cvOnSurfaceVariant.opacity(0.4) : Color.clear))
             }.buttonStyle(.plain).disabled(model.pendingFollows.contains(channel.id))
