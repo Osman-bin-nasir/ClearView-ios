@@ -555,7 +555,7 @@ struct GoodPostApi {
             if JSONScalar.bool(body["needsChannel"]) == true {
                 return CreatorSignIn.needsChannel(email: JSONScalar.nullableString(body["email"]))
             }
-            return CreatorSignIn.session(try adminSession(body))
+            return CreatorSignIn.session(try adminSession(from: body))
         }
     }
 

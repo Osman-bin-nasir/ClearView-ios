@@ -5,12 +5,13 @@ struct GoodPostView: View {
     @State private var model = GoodPostScreenModel()
     @State private var search = ""
     @State private var savedOnly = false
+    @State private var followingOnly = false
     @State private var showPublisher = false
     @State private var linkedChannel: GoodPostChannel?
     @Environment(Router.self) private var router
 
     private var channels: [GoodPostChannel] {
-        model.channels.filter { (!savedOnly || model.savedIDs.contains($0.id)) &&
+        model.channels.filter { (!savedOnly || model.savedIDs.contains($0.id)) && (!followingOnly || model.followedIDs.contains($0.id)) &&
             (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) }
     }
 
@@ -23,8 +24,9 @@ struct GoodPostView: View {
                         Image(systemName: "sparkles").font(.title2).foregroundStyle(Color.cvPrimary)
                     }.padding(.top, 8)
                     HStack {
-                        CVChip(title: "All channels", selected: !savedOnly) { savedOnly = false }
-                        CVChip(title: "Saved", selected: savedOnly) { savedOnly = true }
+                        CVChip(title: "All", selected: !savedOnly && !followingOnly) { savedOnly = false; followingOnly = false }
+                        CVChip(title: "Following", selected: followingOnly) { savedOnly = false; followingOnly = true }
+                        CVChip(title: "Saved", selected: savedOnly) { savedOnly = true; followingOnly = false }
                     }
                     if let message = model.message { CVErrorBanner(message: message) { Task { await model.load() } } }
                     HStack {
@@ -155,9 +157,16 @@ struct ChannelFeedView: View {
                     Text(channel.name).font(.title2.bold())
                     if let description = channel.description { Text(description).font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center) }
                     Text("\(channel.followerCount) followers").font(.caption).foregroundStyle(Color.cvPrimary)
-                    Button(model.savedIDs.contains(channel.id) ? "Saved on this iPhone" : "Save channel") { model.toggleSaved(channel) }
-                        .buttonStyle(.borderedProminent)
+                    HStack {
+                        Button(model.followedIDs.contains(channel.id) ? "Following" : "Follow") {
+                            Task { await model.toggleFollow(channel) }
+                        }.buttonStyle(.borderedProminent).disabled(model.pendingFollows.contains(channel.id))
+                        Button { model.toggleSaved(channel) } label: {
+                            Image(systemName: model.savedIDs.contains(channel.id) ? "bookmark.fill" : "bookmark")
+                        }.buttonStyle(.bordered).accessibilityLabel(model.savedIDs.contains(channel.id) ? "Unsave channel" : "Save channel on this iPhone")
+                    }
                 }.padding(.vertical, 16).frame(maxWidth: .infinity)
+                if let message = model.message { CVErrorBanner(message: message) }
                 if let message = feed.message { CVErrorBanner(message: message) { Task { await feed.load() } } }
                 if feed.loading && feed.posts.isEmpty { ProgressView().frame(maxWidth: .infinity).padding() }
                 ForEach(feed.posts.filter { search.isEmpty || ($0.body ?? "").localizedCaseInsensitiveContains(search) }) { post in
@@ -203,7 +212,17 @@ struct ChannelFeedView: View {
                     }
                 }
                 HStack(spacing: 12) {
-                    ForEach(post.reactions, id: \.emoji) { reaction in Text("\(reaction.emoji) \(reaction.count)").font(.caption) }
+                    ForEach(post.reactions, id: \.emoji) { reaction in
+                        Button { Task { await feed.react(to: post, emoji: reaction.emoji) } } label: {
+                            Text("\(reaction.emoji) \(reaction.count)").font(.caption)
+                                .padding(5).background(feed.myReactions[post.id] == reaction.emoji ? Color.cvPrimaryContainer : .clear, in: Capsule())
+                        }.disabled(feed.reacting.contains(post.id))
+                    }
+                    if !feed.emojiOptions.isEmpty {
+                        Menu {
+                            ForEach(feed.emojiOptions, id: \.self) { emoji in Button(emoji) { Task { await feed.react(to: post, emoji: emoji) } } }
+                        } label: { Image(systemName: "face.smiling").font(.caption) }.disabled(feed.reacting.contains(post.id))
+                    }
                     Spacer()
                     Label("\(post.views)", systemImage: "eye").font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
                     ShareLink(item: post.body ?? post.linkUrl ?? channel.shareLink) { Image(systemName: "square.and.arrow.up").font(.caption) }

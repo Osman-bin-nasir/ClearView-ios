@@ -7,6 +7,7 @@ final class AppFlowsUITests: XCTestCase {
 
     func testFourTabsAndCaptureScreens() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Quran Reminder"].waitForExistence(timeout: 10))
         capture("Quran", app: app)
@@ -21,6 +22,7 @@ final class AppFlowsUITests: XCTestCase {
 
     func testTaskPersistsAcrossLaunches() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         app.tabBars.buttons["More"].tap()
         app.buttons.matching(NSPredicate(format: "label CONTAINS 'Todo'")).firstMatch.tap()
@@ -43,6 +45,7 @@ final class AppFlowsUITests: XCTestCase {
 
     func testDhikrCounterAndPlaylistCreation() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         app.tabBars.buttons["More"].tap()
         app.buttons.matching(NSPredicate(format: "label CONTAINS 'Dhikr Counter'")).firstMatch.tap()

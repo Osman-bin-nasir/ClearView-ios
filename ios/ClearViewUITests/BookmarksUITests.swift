@@ -51,6 +51,7 @@ final class BookmarksUITests: XCTestCase {
     /// The whole flow, plus the assertion that the explicit verse wins.
     func testBookmarkedVerseIsReachableAndOpensAtThatVerse() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         app.navigationBars.buttons["Browse Quran"].tap()
 
@@ -124,6 +125,7 @@ final class BookmarksUITests: XCTestCase {
     /// own heading, and tapping it opens the surah.
     func testStarredSurahAppearsOnBookmarksAndOpens() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         app.navigationBars.buttons["Browse Quran"].tap()
 

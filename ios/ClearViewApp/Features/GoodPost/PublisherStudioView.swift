@@ -12,6 +12,9 @@ struct PublisherStudioView: View {
     @State private var busy = false
     @State private var showCreate = false
     @State private var channelName = ""
+    @State private var accountMode = "Creator"
+    @State private var signUp = false
+    @State private var creatorToken: String?
 
     var body: some View {
         NavigationStack {
@@ -35,13 +38,18 @@ struct PublisherStudioView: View {
             VStack(spacing: 24) {
                 CVEmptyState(title: "Share something good", message: "Sign in with your ClearView publisher account to manage your channels and publish updates.", symbol: "square.and.pencil")
                 VStack(spacing: 16) {
+                    Picker("Account type", selection: $accountMode) {
+                        Text("Creator").tag("Creator")
+                        Text("Administrator").tag("Administrator")
+                    }.pickerStyle(.segmented)
                     TextField("Email", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Divider()
                     SecureField("Password", text: $password).textContentType(.password)
+                    if accountMode == "Creator" { Toggle("Create a new account", isOn: $signUp).font(.subheadline) }
                 }.padding(20).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 18))
                 if let message { CVErrorBanner(message: message) }
                 Button { Task { await login() } } label: {
-                    HStack { if busy { ProgressView() }; Text("Sign in").fontWeight(.semibold) }.frame(maxWidth: .infinity)
+                    HStack { if busy { ProgressView() }; Text(accountMode == "Creator" && signUp ? "Create account" : "Sign in").fontWeight(.semibold) }.frame(maxWidth: .infinity)
                 }.buttonStyle(.borderedProminent).controlSize(.large).disabled(busy || email.isEmpty || password.isEmpty)
                 Text("Reading channels is always available without an account. Publisher access is managed by ClearView.")
                     .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center)
@@ -78,6 +86,26 @@ struct PublisherStudioView: View {
 
     private func login() async {
         busy = true
+        defer { busy = false; password = "" }
+        if accountMode == "Creator" {
+            guard let token = await repository.creatorToken(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password, signUp: signUp) else {
+                message = "Couldn't sign in. Check your email, password, and connection. New accounts need a password of at least 6 characters."
+                return
+            }
+            let result = await repository.creatorLogin(idToken: token)
+            switch result {
+            case .ok(.session(let value)):
+                session = value
+                message = nil
+                await loadChannels()
+            case .ok(.needsChannel):
+                creatorToken = token
+                showCreate = true
+                message = nil
+            case .failed, .unreachable: message = result.userMessage
+            }
+            return
+        }
         let result = await repository.adminLogin(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
         password = ""
         if let value = result.value { session = value; message = nil; await loadChannels() }
@@ -96,6 +124,16 @@ struct PublisherStudioView: View {
     private func createChannel() async {
         let name = channelName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+        if let creatorToken {
+            let result = await repository.creatorCreateChannel(idToken: creatorToken, name: name)
+            if let value = result.value {
+                session = value
+                self.creatorToken = nil
+                message = nil
+                await loadChannels()
+            } else { message = result.userMessage }
+            return
+        }
         let result = await repository.adminCreateChannel(body: ["name": name])
         if result.isOk { channelName = ""; await loadChannels() }
         else { message = result.userMessage }
