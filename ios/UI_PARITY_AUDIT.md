@@ -18,7 +18,7 @@ and the supplied screenshots remain the source of truth.
 | Filters | `media/ui/FilterSheet.kt`, `media/util/FeedFilters.kt` | Existing Swift rules reused; six collapsible groups, draft state, Reset/Apply, platform normalization, inclusive custom dates. |
 | Safina Society | `media/data/MediaRepository.kt: DEFAULT_CHANNEL` | Android's real default channel, seeded only on first initialization. Existing empty subscriptions are not reseeded. |
 | Playlists | `media/ui/MediaTab.kt: PlaylistsSheet` | Existing local create/add/remove flows retained. URL imports and detailed edit/search/filter parity pending. |
-| Video/audio player | `media/ui/VideoPlayerScreen.kt`, `AudioPlayerScreen.kt` | Playback still opens the platform page. Embedded controls, progress capture, device import, and downloads pending. |
+| Video/audio player | `media/ui/VideoPlayerScreen.kt`, `AudioPlayerScreen.kt` | Embedded YouTube iframe; Android-order actions, timeline, transport, genuine progress capture, and local playlist picker. Audio-only/background playback, extraction/downloads, and device import are explicitly unavailable. |
 | Haramayn | `media/ui/LiveTab.kt`, `media/data/LiveStreamConfig.kt` | Makkah/Madinah destinations and official live-channel entry points added. Embedded live resolver pending. |
 | Directory | `directory/ui/ChannelDirectoryScreen.kt`, `media/ui/ChannelDirectorySheet.kt` | Existing real API directory retained; further category/subcategory layout refinement pending. |
 | Good Post | `goodpost/ui/GoodPostHome.kt`, `GoodPostExplore.kt`, `GoodPostDiscover.kt` | Following-channel rows, role menus, advertisement carousel, and category discovery are the next UI phase. |
@@ -32,10 +32,11 @@ and the supplied screenshots remain the source of truth.
   `CLEARVIEW_MEDIA_FIXTURE`; they neither authenticate nor write to the backend.
 - YouTube feed content comes from RSS. Instagram/X feed ingestion is not connected
   on iOS; the channel-add UI explicitly says so and preserves profile browsing.
-- Opening Safari is not evidence that a video was watched. Recently opened remains
-  in the feed menu. Continue Watching only renders stored, valid progress and
+- Opening a link is not evidence that a video was watched. The feed menu has only
+  Hidden Videos, Hidden Channels, Add Video by URL, and Add Video from Device.
+  Saved and recently opened records are retained. Continue Watching only renders stored, valid progress and
   excludes Shorts, live streams, hidden videos, and hidden All Feed channels.
-  Genuine progress capture awaits the embedded-player phase.
+  Embedded playback now records real player position/duration, throttled to five seconds with pause/exit flushes.
 - Existing Media JSON migrates through optional fields without deleting saved
   videos, playlists, or subscriptions. Unknown durations/timestamps are omitted.
 - Device import reports the missing integration instead of fabricating success.
@@ -51,7 +52,10 @@ validation.
 
 Tests cover Quran word/reference/Arabic search, library migration, progress-based
 filters, hiding, and UI navigation. Screenshots cover Quran Search/Surah/Bookmarks
-and Media Feed/Videos/Filters/channel addition.
+and Media Feed/Videos/Filters/channel addition. Targeted player checks add command
+delivery, player state, progress/playlist persistence, control placement, and the
+four-item menu. Real-network playback verification can be skipped by CI when
+YouTube is unavailable; a skipped smoke test is not a playback success.
 
 This is the Quran/Media discovery slice, not a claim of complete parity across all
 nine requested phases. Playback/playlists precede Good Post, tools, and admin work.

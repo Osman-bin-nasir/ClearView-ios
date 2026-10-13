@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-struct LibraryVideo: Codable, Identifiable, Equatable {
+struct LibraryVideo: Codable, Identifiable, Hashable {
     var id: String
     var title: String
     var channel: String
@@ -275,6 +275,20 @@ final class MediaLibrary {
         state.recent.removeAll { $0.id == video.id }
         state.recent.insert(video, at: 0)
         state.recent = Array(state.recent.prefix(30))
+        persist()
+    }
+
+    func recordProgress(_ video: LibraryVideo, position: Double, duration: Double) {
+        guard video.live != true, position.isFinite, duration.isFinite, duration > 0, position > 0 else { return }
+        if state.watchProgress == nil { state.watchProgress = [:] }
+        state.watchProgress?[video.id] = MediaWatchProgress(position: min(position, duration), duration: duration, updatedAt: Date(), dismissedFromContinue: false)
+        persist()
+    }
+
+    func add(_ video: LibraryVideo, to playlistID: String) {
+        guard let index = state.playlists.firstIndex(where: { $0.id == playlistID }),
+              !state.playlists[index].videos.contains(where: { $0.id == video.id }) else { return }
+        state.playlists[index].videos.append(video)
         persist()
     }
 
