@@ -237,7 +237,8 @@ enum GoodPostConfiguration {
     static let baseUrlKey = "GoodPostBaseURL"
 
     static var baseURL: String {
-        (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed ?? ""
+        (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed
+            ?? "https://clearview-1neb.onrender.com"
     }
 }
 
@@ -554,7 +555,7 @@ struct GoodPostApi {
             if JSONScalar.bool(body["needsChannel"]) == true {
                 return CreatorSignIn.needsChannel(email: JSONScalar.nullableString(body["email"]))
             }
-            return CreatorSignIn.session(try adminSession(body))
+            return CreatorSignIn.session(try adminSession(from: body))
         }
     }
 

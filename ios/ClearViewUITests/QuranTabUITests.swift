@@ -29,6 +29,7 @@ final class QuranTabUITests: XCTestCase {
     /// The whole slice in one pass: list → tap → every ayah of the surah.
     func testSurahListOpensTheWholeSurah() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
@@ -47,6 +48,7 @@ final class QuranTabUITests: XCTestCase {
     /// is the number a hardcoded table would most likely get wrong.
     func testLongSurahOpensWithItsRealAyahCount() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app), "the surah list must appear")
@@ -65,6 +67,7 @@ final class QuranTabUITests: XCTestCase {
     /// codec, not that the app writes and reads the same place across two launches.
     func testReadingPositionSurvivesRelaunch() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app), "the surah list must appear")
@@ -104,6 +107,7 @@ final class QuranTabUITests: XCTestCase {
     /// still usable afterwards.
     func testGoingBackReturnsToTheList() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
@@ -126,6 +130,7 @@ final class QuranTabUITests: XCTestCase {
     /// model kept growing on its own, the button would still be enabled here.
     func testTheArabicTextSizeControlsAreWiredAndBounded() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
 
@@ -179,6 +184,9 @@ final class QuranTabUITests: XCTestCase {
     }
 
     private func openSurahAtTop(_ name: String, in app: XCUIApplication) -> Bool {
+        if app.navigationBars["Quran Reminder"].exists {
+            app.navigationBars.buttons["Browse Quran"].tap()
+        }
         let row = app.staticTexts[name]
         guard row.waitForExistence(timeout: listTimeout) else { return false }
 

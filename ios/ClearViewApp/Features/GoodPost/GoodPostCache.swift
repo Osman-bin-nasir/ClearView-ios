@@ -100,7 +100,7 @@ struct GoodPostCache {
     func loadChannels() -> CachedChannels? {
         let decoded = GoodPostCodec.decodeChannels(defaults.string(forKey: Key.channels))
         guard !decoded.isEmpty else { return nil }
-        return CachedChannels(channels: decoded, savedAtMs: savedAt(defaults, Key.channels))
+        return CachedChannels(channels: decoded, savedAtMs: saved(defaults, Key.channels))
     }
 
     /// True while the saved channel list is fresh enough to skip a refetch.
@@ -125,7 +125,7 @@ struct GoodPostCache {
     func loadFollowedChannels() -> CachedChannels? {
         let decoded = GoodPostCodec.decodeChannels(defaults.string(forKey: Key.followedChannels))
         guard !decoded.isEmpty else { return nil }
-        return CachedChannels(channels: decoded, savedAtMs: savedAt(defaults, Key.followedChannels))
+        return CachedChannels(channels: decoded, savedAtMs: saved(defaults, Key.followedChannels))
     }
 
     func followedChannelsAreFresh(nowMs: Int64) -> Bool {

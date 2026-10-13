@@ -9,6 +9,7 @@ import SwiftUI
 /// they are.
 struct RootView: View {
     @State private var router = Router()
+    @AppStorage("appearance") private var appearance = "dark"
 
     var body: some View {
         TabView(selection: $router.selectedTab) {
@@ -30,6 +31,8 @@ struct RootView: View {
         }
         .tint(.cvPrimary)
         .environment(router)
+        .preferredColorScheme(appearance == "system" ? nil : appearance == "light" ? .light : .dark)
+        .onOpenURL { url in router.open(url) }
     }
 }
 

@@ -18,6 +18,7 @@ final class ReminderUITests: XCTestCase {
 
     func testTheReminderAppearsAndOpensItsOwnVerse() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         // The card, and the position it is showing.
@@ -66,6 +67,7 @@ final class ReminderUITests: XCTestCase {
     /// will cross.
     func testSteppingForwardAndBackReturnsToTheSameVerse() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         let position = app.staticTexts["quran.reminder.position"]
@@ -109,6 +111,7 @@ final class ReminderUITests: XCTestCase {
     /// rather than of the control.
     func testTheRefreshControlPicksAgain() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         let position = app.staticTexts["quran.reminder.position"]

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>ClearView</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.muddassir.clearview</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>clearview</string></array>
+        </dict>
+    </array>
+    <key>GoodPostBaseURL</key>
+    <string>https://clearview-1neb.onrender.com</string>
+    <key>FirebaseAPIKey</key>
+    <string>AIzaSyC4b60yMkLUPuN0UaDml2pJ817RGGRgKZU</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+</dict>
+</plist>

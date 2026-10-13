@@ -51,7 +51,9 @@ final class BookmarksUITests: XCTestCase {
     /// The whole flow, plus the assertion that the explicit verse wins.
     func testBookmarkedVerseIsReachableAndOpensAtThatVerse() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
+        app.navigationBars.buttons["Browse Quran"].tap()
 
         // Al-Baqara: long enough that scrolling genuinely moves the top of the
         // page far from ayah 1, which is what makes the final assertion mean
@@ -123,7 +125,9 @@ final class BookmarksUITests: XCTestCase {
     /// own heading, and tapping it opens the surah.
     func testStarredSurahAppearsOnBookmarksAndOpens() {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
+        app.navigationBars.buttons["Browse Quran"].tap()
 
         let alFaatiha = app.staticTexts["Al-Faatiha"]
         XCTAssertTrue(alFaatiha.waitForExistence(timeout: listTimeout), "the surah list must appear")

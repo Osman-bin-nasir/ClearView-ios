@@ -32,7 +32,7 @@ actor GoodPostRepository {
 
     init(
         api: GoodPostApi = GoodPostApi(),
-        identity: GoodPostIdentity = NoIdentity(),
+        identity: GoodPostIdentity = FirebaseRESTIdentity.shared,
         cache: GoodPostCache = GoodPostCache(),
         tokens: GoodPostAdminSessionStoring = KeychainAdminSessionStore()
     ) {
