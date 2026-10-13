@@ -94,7 +94,7 @@ final class QuranTabUITests: XCTestCase {
         // Relaunched WITHOUT the reset: a reading position surviving a relaunch is
         // the whole point of this test, and a clean slate would erase what is being
         // asserted.
-        app.launchArguments = Self.cleanLaunch
+        app.launchArguments = ["--uitesting"]
         app.launch()
 
         // The app opens on the verse page, so the surah list is reached the way a
@@ -102,6 +102,7 @@ final class QuranTabUITests: XCTestCase {
         let search = app.buttons["quran.search"]
         XCTAssertTrue(search.waitForExistence(timeout: listTimeout), "the Quran tab must open again")
         search.tap()
+        app.buttons["quran.section.Surah"].tap()
 
         let alBaqaraAgain = app.staticTexts["Al-Baqara"]
         XCTAssertTrue(alBaqaraAgain.waitForExistence(timeout: listTimeout), "the surah list must appear again")
@@ -373,7 +374,11 @@ final class QuranTabUITests: XCTestCase {
     /// the reader opens it.
     private func openSurah(_ name: String, in app: XCUIApplication) -> Bool {
         let search = app.buttons["quran.search"]
-        if search.waitForExistence(timeout: listTimeout) { search.tap() }
+        if search.waitForExistence(timeout: listTimeout) {
+            search.tap()
+            guard app.buttons["quran.section.Surah"].waitForExistence(timeout: 15) else { return false }
+            app.buttons["quran.section.Surah"].tap()
+        }
         let row = app.staticTexts[name]
         guard row.waitForExistence(timeout: listTimeout) else { return false }
         row.tap()
@@ -390,6 +395,8 @@ final class QuranTabUITests: XCTestCase {
         // the tap and report the surah list as missing.
         if app.buttons["quran.search"].waitForExistence(timeout: listTimeout) {
             app.buttons["quran.search"].tap()
+            guard app.buttons["quran.section.Surah"].waitForExistence(timeout: 15) else { return false }
+            app.buttons["quran.section.Surah"].tap()
         }
         let row = app.staticTexts[name]
         guard row.waitForExistence(timeout: listTimeout) else { return false }

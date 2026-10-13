@@ -28,20 +28,34 @@ import SharedKotlin
     struct BookmarksView: View {
 
     @State private var model: BookmarksModel
+    @State private var query = ""
+    @State private var pendingVerse: BookmarksModel.BookmarkedVerse?
+    private let embedded: Bool
 
-    init(repository: QuranRepository) {
+    init(repository: QuranRepository, embedded: Bool = false) {
         _model = State(initialValue: BookmarksModel(repository: repository))
+        self.embedded = embedded
     }
 
     var body: some View {
-        content
+        VStack(spacing: 12) {
+            CVSearchField(text: $query, prompt: "Search bookmarks", identifier: "bookmarks.search").padding(.horizontal, 16)
+            content
+        }
             .background(Color.cvBackground)
-            .navigationTitle("Bookmarks")
+            .navigationTitle(embedded ? "Quran" : "Bookmarks")
             .navigationBarTitleDisplayMode(.inline)
             // `onAppear` rather than `task`: the reader can change a bookmark and
             // then pop back here, and the list has to include it. `task` runs once
             // per view identity and would show a stale list for the session.
             .onAppear { Task { await model.reload() } }
+            .alert("Remove bookmark?", isPresented: Binding(get: { pendingVerse != nil }, set: { if !$0 { pendingVerse = nil } })) {
+                Button("Remove", role: .destructive) {
+                    if let verse = pendingVerse { Task { await model.remove(verse) } }
+                    pendingVerse = nil
+                }
+                Button("Cancel", role: .cancel) { pendingVerse = nil }
+            } message: { Text("Remove this verse from your bookmarks?") }
     }
 
     @ViewBuilder
@@ -53,13 +67,18 @@ import SharedKotlin
                 .background(Color.cvBackground)
 
         case .ready(let starred, let verses):
+            let matchingSurahs = starred.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.translation.localizedCaseInsensitiveContains(query) || Int(query) == $0.number }
+            let matchingVerses = verses.filter { query.isEmpty || $0.surah.name.localizedCaseInsensitiveContains(query) || $0.text.localizedCaseInsensitiveContains(query) || $0.id.contains(query) }
             if starred.isEmpty && verses.isEmpty {
                 emptyState
+            } else if matchingSurahs.isEmpty && matchingVerses.isEmpty {
+                CVEmptyState(title: "No bookmarks found", message: "Try another Surah name, word, or verse reference.", symbol: "magnifyingglass")
+                    .frame(maxHeight: .infinity)
             } else {
                 List {
-                    if !starred.isEmpty {
-                        Section("Starred surahs") {
-                            ForEach(starred) { surah in
+                    if !matchingSurahs.isEmpty {
+                        Section("Bookmarked Surahs") {
+                            ForEach(matchingSurahs) { surah in
                                 // No `openAt`: a starred surah means "read this
                                 // surah", so the reader restores the saved reading
                                 // position — which is what a reader wants.
@@ -69,14 +88,14 @@ import SharedKotlin
                                     StarredSurahRow(surah: surah)
                                 }
                                 .accessibilityIdentifier(Self.starredRowIdentifier(surah.number))
-                                .listRowBackground(Color.cvSurface)
+                                .listRowBackground(Color.cvSurfaceContainer)
                             }
                         }
                     }
 
-                    if !verses.isEmpty {
+                    if !matchingVerses.isEmpty {
                         Section("Bookmarked verses") {
-                            ForEach(verses) { verse in
+                            ForEach(matchingVerses) { verse in
                                 // `openAt`: a bookmarked verse means "take me to
                                 // *this* verse", which is a different intent from
                                 // "read this surah" — and the only reason the
@@ -91,10 +110,10 @@ import SharedKotlin
                                     BookmarkedVerseRow(verse: verse)
                                 }
                                 .accessibilityIdentifier(Self.verseRowIdentifier(verse.id))
-                                .listRowBackground(Color.cvSurface)
+                                .listRowBackground(Color.cvSurfaceContainer)
                                 .swipeActions(edge: .trailing) {
                                     Button(role: .destructive) {
-                                        Task { await model.remove(verse) }
+                                        pendingVerse = verse
                                     } label: {
                                         Label("Remove", systemImage: "bookmark.slash")
                                     }

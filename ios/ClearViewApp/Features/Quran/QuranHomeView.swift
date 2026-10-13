@@ -1,146 +1,155 @@
 import SwiftUI
 import SharedKotlin
 
-/// The surah list — the "Surah" view of Android's Quran screen
-/// (`quran/ui/QuranSearchScreen.kt`'s browse tab).
-///
-/// The list is the real downloaded edition, parsed by the **shared Kotlin
-/// module** (`QuranJsonParser`), so the names, meanings and ayah counts are the
-/// same on both platforms and nothing here can drift from what Android shows.
-///
-/// Opened from the magnifier in the Quran tab's bar. Android's screen is one
-/// surface with three views — search by words, browse surahs, and the bookmarks
-/// the reader kept — and this is the middle one; the other two arrive with the
-/// rest of that screen.
+enum QuranDiscoverySection: String, CaseIterable {
+    case search = "Search"
+    case surah = "Surah"
+    case bookmarks = "Bookmarks"
+}
+
 struct QuranLibraryView: View {
+    @State private var model: QuranModel
+    @State private var section: QuranDiscoverySection
+    @State private var query = ""
+    @State private var results: [QuranVerse] = []
+    @State private var searching = false
+    @State private var searchError: String?
+    @State private var starred = Set<Int32>()
+    @State private var pendingRemoval: SurahSummary?
+    private let store = QuranStore()
 
-    @State private var model = QuranModel()
-    @State private var search = ""
-
-    var body: some View {
-        Group {
-            content
-                .background(Color.cvBackground)
-                .navigationTitle("Quran")
-                .navigationBarTitleDisplayMode(.inline)
-                .searchable(text: $search, prompt: "Surah name or number")
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            BookmarksView(repository: model.repository)
-                        } label: {
-                            Image(systemName: "bookmark")
-                        }
-                        .disabled(!model.isReady)
-                        .accessibilityLabel("Bookmarks")
-                    }
-                }
-                // `.task` runs on appear and is cancelled with the view, so a
-                // download in flight when the reader leaves is torn down rather
-                // than left running against a view nobody is looking at.
-                .task { await model.load() }
-        }
+    init(repository: QuranRepository = QuranRepository(), section: QuranDiscoverySection = .surah) {
+        _model = State(initialValue: QuranModel(repository: repository))
+        _section = State(initialValue: section)
     }
 
-    @ViewBuilder
-    private var content: some View {
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 6) {
+                ForEach(QuranDiscoverySection.allCases, id: \.self) { option in
+                    Button { section = option; query = "" } label: {
+                        Text(option.rawValue).font(.subheadline.bold())
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .foregroundStyle(section == option ? Color.cvPrimary : Color.cvOnSurfaceVariant)
+                            .background(section == option ? Color.cvPrimaryContainer : Color.cvSurfaceContainer, in: Capsule())
+                    }.buttonStyle(.plain).accessibilityIdentifier("quran.section.\(option.rawValue)")
+                        .accessibilityAddTraits(section == option ? .isSelected : [])
+                }
+            }.padding(.horizontal, 16)
+            if section == .bookmarks {
+                BookmarksView(repository: model.repository, embedded: true)
+            } else {
+                CVSearchField(text: $query, prompt: section == .surah ? "Surah name or number" : "Search word or verse (2:255)")
+                    .padding(.horizontal, 16)
+                content
+            }
+        }.padding(.top, 8).background(Color.cvBackground)
+            .toolbar(.visible, for: .navigationBar)
+            .navigationTitle("Quran").navigationBarTitleDisplayMode(.inline)
+            .task { await model.load(); starred = Set(store.starredSurahs) }
+            .onAppear { starred = Set(store.starredSurahs) }
+            .task(id: "\(section.rawValue):\(query)") { await searchVerses() }
+            .alert("Remove favorite?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })) {
+                Button("Remove", role: .destructive) {
+                    if let surah = pendingRemoval { toggleStar(surah) }
+                    pendingRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingRemoval = nil }
+            } message: { Text("Remove \(pendingRemoval?.name ?? "this surah") from bookmarked Surahs?") }
+    }
+
+    @ViewBuilder private var content: some View {
         switch model.state {
         case .loading:
-            VStack(spacing: 12) {
-                ProgressView().tint(.cvPrimary)
-                Text("Getting the Quran…")
-                    .font(.footnote)
-                    .foregroundStyle(Color.cvOnSurfaceVariant)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.cvBackground)
-
-        case .ready(let surahs):
-            List(matching(surahs)) { surah in
-                NavigationLink {
-                    SurahReaderView(surah: surah, repository: model.repository)
-                } label: {
-                    SurahRow(surah: surah, scale: model.arabicTextScale)
-                }
-                .listRowBackground(Color.cvBackground)
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-
+            ProgressView("Getting the Quran…").frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
-            // Retry is offered because both realistic failures — offline, and a
-            // body that would not parse — are worth trying again, and the
-            // alternative is an app that stays broken until it is relaunched.
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 36))
-                    .foregroundStyle(Color.cvError)
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(Color.cvOnSurface)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 320)
-                CVButton(title: "Try again", style: .filled) {
-                    Task { await model.retry() }
+            VStack {
+                CVEmptyState(title: "Couldn't load Quran", message: message, symbol: "wifi.exclamationmark")
+                Button("Try again") { Task { await model.retry() } }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .ready(let surahs):
+            if section == .surah {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(surahs.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.translation.localizedCaseInsensitiveContains(query) || Int(query) == $0.number }) { surah in
+                            HStack(spacing: 12) {
+                                NavigationLink { SurahReaderView(surah: surah, repository: model.repository) } label: {
+                                    HStack(spacing: 14) {
+                                        Text(String(format: "%02d", surah.number)).font(.subheadline.bold())
+                                            .foregroundStyle(Color.cvPrimary).frame(width: 36, height: 36)
+                                            .background(Color.cvPrimaryContainer, in: RoundedRectangle(cornerRadius: 10))
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(surah.name).font(.headline)
+                                            Text(surah.translation).font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }.contentShape(Rectangle())
+                                }.buttonStyle(.plain).accessibilityIdentifier("quran.surah.\(surah.number)")
+                                Button {
+                                    if starred.contains(Int32(surah.number)) { pendingRemoval = surah }
+                                    else { toggleStar(surah) }
+                                } label: {
+                                    Image(systemName: starred.contains(Int32(surah.number)) ? "star.fill" : "star")
+                                        .font(.title3).foregroundStyle(starred.contains(Int32(surah.number)) ? Color.cvPrimary : Color.cvOnSurfaceVariant)
+                                        .frame(width: 44, height: 44)
+                                }.buttonStyle(.plain).accessibilityLabel("\(starred.contains(Int32(surah.number)) ? "Remove favorite" : "Favorite") \(surah.name)")
+                            }.padding(14).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                    }.padding(.horizontal, 16).padding(.bottom, 16)
+                }
+            } else if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                CVEmptyState(title: "Search Quran", message: "Enter a word, verse number, or reference such as 2:255.", symbol: "magnifyingglass").frame(maxHeight: .infinity)
+            } else if searching {
+                ProgressView("Searching…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let searchError {
+                CVEmptyState(title: "Search unavailable", message: searchError, symbol: "exclamationmark.triangle").frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        Text("\(results.count) results\(results.count == 200 ? " · first 200" : "")").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                        ForEach(results, id: \.stableKey) { verse in
+                            if let surah = surahs.first(where: { $0.number == Int(verse.surahNumber) }) {
+                                NavigationLink { SurahReaderView(surah: surah, repository: model.repository, openAt: verse.ayahNumber) } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("\(verse.surahName) · \(verse.surahNumber):\(verse.ayahNumber)").font(.subheadline.bold()).foregroundStyle(Color.cvPrimary)
+                                        if !verse.arabicText.isEmpty { Text(verse.arabicText).frame(maxWidth: .infinity, alignment: .trailing) }
+                                        Text(verse.text).font(.callout).foregroundStyle(Color.cvOnSurface)
+                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                                        .background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
+                                }.buttonStyle(.plain).accessibilityIdentifier("quran.result.\(verse.surahNumber):\(verse.ayahNumber)")
+                            }
+                        }
+                        if results.isEmpty { CVEmptyState(title: "No results", message: "Try another word or verse reference.", symbol: "magnifyingglass") }
+                    }.padding(16)
                 }
             }
-            .padding(32)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.cvBackground)
         }
     }
 
-    /// Android's surah search matches on the name, the meaning, or the number —
-    /// so "36", "ya-seen" and "Ya Sin" all find the same surah.
-    private func matching(_ surahs: [SurahSummary]) -> [SurahSummary] {
-        let query = search.trimmed
-        guard !query.isEmpty else { return surahs }
-        return surahs.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || $0.translation.localizedCaseInsensitiveContains(query)
-                || String($0.number) == query
+    private func toggleStar(_ surah: SurahSummary) {
+        store.toggleStar(surahNumber: Int32(surah.number))
+        starred = Set(store.starredSurahs)
+    }
+
+    private func searchVerses() async {
+        guard section == .search, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { results = []; searching = false; return }
+        searching = true
+        searchError = nil
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+            let matches = try await model.repository.searchVerses(query)
+            try Task.checkCancellation()
+            results = matches
+            searching = false
+        } catch is CancellationError {
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchError = QuranModel.message(for: error)
+            searching = false
         }
     }
 }
 
-/// One row of the surah list: number, transliterated name, its meaning, and how
-/// many ayahs it holds — the shape Android's browse list draws.
-private struct SurahRow: View {
-    let surah: SurahSummary
-    let scale: Double
-
-    var body: some View {
-        HStack(spacing: 14) {
-            // The number in a rounded badge, the way the Android list and the
-            // printed mushaf both present it.
-            Text("\(surah.number)")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color.cvPrimary)
-                .frame(width: 34, height: 34)
-                .background(Color.cvPrimaryContainer, in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(surah.name)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Color.cvOnSurface)
-                Text(surah.translation)
-                    .font(.caption)
-                    .foregroundStyle(Color.cvOnSurfaceVariant)
-            }
-
-            Spacer(minLength: 8)
-
-            if surah.ayahCount > 0 {
-                Text("\(surah.ayahCount) ayahs")
-                    .font(.caption2)
-                    .foregroundStyle(Color.cvOnSurfaceVariant)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-#Preview {
-    NavigationStack { QuranLibraryView() }
+private extension QuranVerse {
+    var stableKey: String { "\(surahNumber):\(ayahNumber)" }
 }

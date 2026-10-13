@@ -149,6 +149,28 @@ actor QuranRepository {
         try await ensureCached().filter { $0.surahNumber == surahNumber }
     }
 
+    func searchVerses(_ query: String, limit: Int = 200) async throws -> [QuranVerse] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, limit > 0 else { return [] }
+        let parts = trimmed.split(whereSeparator: { $0 == ":" || $0 == "." || $0.isWhitespace })
+        let reference = parts.count == 2 ? parts.compactMap { Int32($0) } : []
+        let plainNumber = Int32(trimmed)
+        let all = try await ensureCached()
+        let arabic = Dictionary((arabicAyahs ?? []).map { ("\($0.surahNumber):\($0.ayahNumber)", $0.text) }, uniquingKeysWith: { first, _ in first })
+        let matches = all.filter { verse in
+            if reference.count == 2 { return verse.surahNumber == reference[0] && verse.ayahNumber == reference[1] }
+            if let plainNumber { return verse.surahNumber == plainNumber || verse.ayahNumber == plainNumber }
+            return verse.text.localizedCaseInsensitiveContains(trimmed) || verse.surahName.localizedCaseInsensitiveContains(trimmed)
+                || "\(verse.surahNumber):\(verse.ayahNumber)".contains(trimmed)
+                || (arabic["\(verse.surahNumber):\(verse.ayahNumber)"]?.contains(trimmed) ?? false)
+        }.prefix(limit)
+        return matches.map { verse in
+            QuranVerse(surahNumber: verse.surahNumber, ayahNumber: verse.ayahNumber, surahName: verse.surahName,
+                surahTranslation: verse.surahTranslation, text: verse.text,
+                arabicText: arabic["\(verse.surahNumber):\(verse.ayahNumber)"] ?? "", totalAyahs: verse.totalAyahs)
+        }
+    }
+
     /// The Arabic text of one surah, keyed by ayah number; empty when the
     /// Arabic edition is not cached — the reader then shows English only, which
     /// is the documented behaviour rather than an error state.

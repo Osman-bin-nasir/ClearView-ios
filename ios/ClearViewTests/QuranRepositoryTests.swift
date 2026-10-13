@@ -28,6 +28,29 @@ final class QuranRepositoryTests: XCTestCase {
 
     // MARK: - Cache policy
 
+    func testSearchMatchesWordsReferencesAndArabicFromCache() async throws {
+        let cache = QuranCache(directory: directory)
+        try cache.write(.english, json: edition([(2, 255, "Allah is ever living"), (2, 256, "No compulsion"), (3, 255, "Another verse")]))
+        try cache.write(.arabic, json: edition([(2, 255, "اللّٰهُ"), (2, 256, "لَا إِكۡرَاهَ")]))
+        let repository = QuranRepository(cache: cache, fetcher: FakeFetcher())
+        let word = try await repository.searchVerses("LIVING")
+        XCTAssertEqual(word.map(\.ayahNumber), [255])
+        XCTAssertEqual(word.first?.arabicText, "اللّٰهُ")
+        for reference in ["2:255", "2.255", "2 255"] {
+            let result = try await repository.searchVerses(reference)
+            XCTAssertEqual(result.count, 1)
+            XCTAssertEqual(result.first?.surahNumber, 2)
+        }
+        let arabic = try await repository.searchVerses("اللّٰهُ")
+        XCTAssertEqual(arabic.count, 1)
+        let numeric = try await repository.searchVerses("255")
+        XCTAssertEqual(numeric.count, 2)
+        let empty = try await repository.searchVerses("  ")
+        XCTAssertTrue(empty.isEmpty)
+        let limited = try await repository.searchVerses("2", limit: 1)
+        XCTAssertEqual(limited.count, 1)
+    }
+
     /// A cached edition must be used with no network at all — that is the whole
     /// point of caching it. The fake throws if it is even asked.
     func testUsesCachedEditionWithoutTouchingTheNetwork() async throws {

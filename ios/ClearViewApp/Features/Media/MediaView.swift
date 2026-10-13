@@ -2,129 +2,350 @@ import SwiftUI
 
 struct MediaView: View {
     @State private var library = MediaLibrary()
-    @State private var selection = "All Feed"
+    @State private var selectedChannel: String?
     @State private var search = ""
+    @State private var searchOpen = false
     @State private var browser: BrowserDestination?
     @State private var showAdd = false
+    @State private var showChannels = false
+    @State private var showAddChannel = false
     @State private var showPlaylists = false
+    @State private var showFilters = false
+    @State private var showHiddenVideos = false
+    @State private var showHiddenChannels = false
+    @State private var showSaved = false
+    @State private var showRecent = false
+    @State private var unavailable: String?
+    @State private var pendingRemoval: DirectoryChannel?
+    @State private var filter = FeedFilter()
 
-    private var videos: [LibraryVideo] {
-        let source = selection == "Saved" ? library.state.saved : selection == "Recently opened" ? library.state.recent : library.state.feed
-        return source.filter { (selection != "Shorts" || $0.isShort) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.channel.localizedCaseInsensitiveContains(search)) }
+    private var videos: [LibraryVideo] { library.filteredVideos(filter, channelID: selectedChannel, query: search) }
+    private var currentChannel: DirectoryChannel? { library.state.channels.first { $0.id == selectedChannel } }
+    private var continuing: [LibraryVideo] {
+        (library.state.recent + library.state.feed).reduce(into: [LibraryVideo]()) { collected, video in
+            guard !collected.contains(where: { $0.id == video.id }), !video.isShort, video.live != true,
+                  (selectedChannel == nil || video.channelID == selectedChannel),
+                  (selectedChannel != nil || !(library.state.hiddenChannelIDs ?? []).contains(video.channelID ?? "")),
+                  !(library.state.hiddenVideoIDs ?? []).contains(video.id),
+                  let progress = library.state.watchProgress?[video.id], progress.fraction >= FeedFilters.startedFractionThreshold,
+                  progress.dismissedFromContinue != true,
+                  progress.fraction < FeedFilters.watchedFractionThreshold else { return }
+            collected.append(video)
+        }.sorted { (library.state.watchProgress?[$0.id]?.updatedAt ?? .distantPast) > (library.state.watchProgress?[$1.id]?.updatedAt ?? .distantPast) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 22) {
                     channels
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack {
-                            ForEach(["All Feed", "Shorts", "Saved", "Recently opened"], id: \.self) { filter in
-                                CVChip(title: filter, selected: selection == filter) { selection = filter }
-                            }
+                    feedHeader
+                    if searchOpen {
+                        CVSearchField(text: $search, prompt: "Search channels and videos", identifier: "media.search.field")
+                        if !search.isEmpty { matchingChannels }
+                    }
+                    if library.loading { ProgressView().frame(maxWidth: .infinity) }
+                    if let error = library.error { CVErrorBanner(message: error) { Task { await library.refresh() } } }
+                    if let currentChannel, currentChannel.platform != "youtube" {
+                        CVCard {
+                            Text("\(currentChannel.platformLabel) feed integration is not available in this iOS build.").font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
+                            Button("Open channel") { browser = BrowserDestination(currentChannel.url) }.buttonStyle(.bordered)
                         }
                     }
-                    if let error = library.error { CVErrorBanner(message: error) { Task { await library.refresh() } } }
-                    if selection == "All Feed", search.isEmpty, !library.state.recent.isEmpty {
-                        CVSectionHeader(title: "Recently opened")
+                    if !continuing.isEmpty && !searchOpen && filter.content != .downloads {
+                        sectionTitle("Continue Watching")
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
-                                ForEach(library.state.recent.prefix(8)) { video in videoCard(video).frame(width: 240) }
+                                ForEach(continuing) { video in
+                                    continueCard(video)
+                                }
                             }
                         }
                     }
-                    HStack {
-                        CVSectionHeader(title: selection, subtitle: selection == "All Feed" ? "A feed you choose. A little less noise." : nil)
-                        if library.loading { ProgressView() }
+                    if !videos.filter(\.isShort).isEmpty {
+                        sectionTitle("Shorts")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(videos.filter(\.isShort)) { video in
+                                    shortCard(video)
+                                }
+                            }
+                        }
+                    }
+                    sectionTitle(filter.content == .downloads ? "Downloads" : "Videos")
+                    LazyVStack(spacing: 12) {
+                        ForEach(videos.filter { !$0.isShort }) { video in videoRow(video) }
                     }
                     if videos.isEmpty && !library.loading {
-                        CVEmptyState(title: search.isEmpty ? "Make room for what matters" : "Nothing found",
-                            message: selection == "Saved" ? "Save videos from your feed, or add a YouTube, Instagram, or X link." : "Explore channels to build your feed, or add a link to your library.", symbol: "play.rectangle")
-                        Button("Add a link") { showAdd = true }.buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
+                        CVEmptyState(title: search.isEmpty ? "No videos to show" : "No results", message: emptyMessage, symbol: "play.rectangle")
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 16)], spacing: 20) {
-                        ForEach(videos) { video in videoCard(video) }
-                    }
-                }.padding(20)
+                }.padding(.horizontal, 16).padding(.vertical, 12)
             }.background(Color.cvBackground).navigationTitle("Media")
-                .searchable(text: $search, prompt: "Search your feed")
-                .toolbar {
-                    Button { showPlaylists = true } label: { Image(systemName: "rectangle.stack") }.accessibilityLabel("Playlists")
-                    Button { showAdd = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add media link")
-                }
                 .refreshable { await library.refresh() }
                 .task { await library.refresh() }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
                 .sheet(isPresented: $showAdd) { AddMediaLinkView(library: library) }
+                .sheet(isPresented: $showAddChannel) { AddMediaChannelView(library: library) }
                 .sheet(isPresented: $showPlaylists) { MediaPlaylistsView(library: library) }
+                .sheet(isPresented: $showChannels) { channelManager }
+                .sheet(isPresented: $showFilters) { MediaFilterSheet(filter: filter) { filter = $0 } }
+                .sheet(isPresented: $showHiddenVideos) { videoCollection("Hidden videos", videos: (library.state.feed + library.state.saved).filter { (library.state.hiddenVideoIDs ?? []).contains($0.id) && (selectedChannel == nil || $0.channelID == selectedChannel) }, hidden: true) }
+                .sheet(isPresented: $showHiddenChannels) { hiddenChannels }
+                .sheet(isPresented: $showSaved) { videoCollection("Saved videos", videos: library.state.saved) }
+                .sheet(isPresented: $showRecent) { videoCollection("Recently opened", videos: library.state.recent) }
+                .alert("Not available yet", isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
+                    Button("OK", role: .cancel) { unavailable = nil }
+                } message: { Text(unavailable ?? "") }
+                .alert("Remove channel?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })) {
+                    Button("Remove", role: .destructive) {
+                        if let channel = pendingRemoval {
+                            library.subscribe(channel)
+                            if selectedChannel == channel.id { selectedChannel = nil }
+                            Task { await library.refresh() }
+                        }
+                        pendingRemoval = nil
+                    }
+                    Button("Cancel", role: .cancel) { pendingRemoval = nil }
+                } message: { Text("Remove \(pendingRemoval?.displayName ?? "this channel") from your subscriptions? Saved videos and playlists are kept.") }
         }
     }
 
+    private var feedHeader: some View {
+        HStack(spacing: 4) {
+            sectionTitle(currentChannel?.displayName ?? "All Feed")
+            Spacer(minLength: 0)
+            Button { searchOpen.toggle(); if !searchOpen { search = "" } } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44) }.accessibilityLabel("Search media").accessibilityIdentifier("media.search")
+            Menu {
+                Button("Hidden videos", systemImage: "eye.slash") { showHiddenVideos = true }
+                Button("Hidden channels", systemImage: "person.crop.circle.badge.xmark") { showHiddenChannels = true }
+                Button("Add video by URL", systemImage: "link") { showAdd = true }
+                Button("Add video from device", systemImage: "folder") { unavailable = "Device video import is not connected yet. You can add web videos by URL." }
+                Divider()
+                Button("Saved videos", systemImage: "bookmark") { showSaved = true }
+                Button("Recently opened", systemImage: "clock") { showRecent = true }
+            } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 44, height: 44) }.accessibilityLabel("Feed options")
+            Button { showFilters = true } label: {
+                Image(systemName: "line.3.horizontal.decrease").foregroundStyle(filter.isActive ? Color.cvPrimary : Color.cvOnSurfaceVariant).frame(width: 44, height: 44)
+            }.accessibilityLabel("Filter feed").accessibilityIdentifier("media.filters")
+        }.foregroundStyle(Color.cvOnSurfaceVariant)
+    }
+
     private var channels: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                CVSectionHeader(title: "Channels")
-                NavigationLink("Explore") { MediaDirectoryView(library: library) }.font(.subheadline.weight(.semibold))
+                Text("Channels").font(.headline)
+                Spacer()
+                Button("View all") { showChannels = true }.font(.subheadline.bold())
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 20) {
-                    ForEach(library.state.channels.isEmpty ? Array(library.directory.allChannels.prefix(6)) : library.state.channels) { channel in
-                        Button { browser = BrowserDestination(channel.url) } label: {
-                            VStack(spacing: 8) {
-                                CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 58)
-                                    .padding(3).overlay(Circle().stroke(Color.cvPrimary.opacity(0.5), lineWidth: 1))
-                                Text(channel.displayName).font(.caption2).lineLimit(1).frame(width: 72)
+                HStack(alignment: .top, spacing: 10) {
+                    avatar("All", symbol: "square.grid.2x2", color: .cvSecondaryContainer, selected: selectedChannel == nil) { selectedChannel = nil }
+                    avatar("Playlists", symbol: "text.line.first.and.arrowtriangle.forward", color: .purple) { showPlaylists = true }
+                    NavigationLink { HaramaynView() } label: { avatarLabel("Haramayn", symbol: "tv", color: .green) }.buttonStyle(.plain)
+                    NavigationLink { MediaDirectoryView(library: library) } label: { avatarLabel("Directory", symbol: "photo.on.rectangle", color: .blue) }.buttonStyle(.plain)
+                    ForEach(library.activeChannels) { channel in
+                        Button { selectedChannel = selectedChannel == channel.id ? nil : channel.id } label: {
+                            VStack(spacing: 7) {
+                                CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 50).padding(3)
+                                    .overlay(Circle().stroke(selectedChannel == channel.id ? Color.cvPrimary : Color.clear, lineWidth: 2))
+                                Text(channel.displayName).font(.caption.weight(.semibold)).lineLimit(1).frame(width: 68)
                             }
-                        }.buttonStyle(.plain)
-                    }
-                    NavigationLink { MediaDirectoryView(library: library) } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: "plus").font(.title2).frame(width: 64, height: 64)
-                                .background(Color.cvSurfaceContainerHigh, in: Circle())
-                            Text("Discover").font(.caption2)
+                        }.buttonStyle(.plain).contextMenu {
+                            Button("Open channel") { browser = BrowserDestination(channel.url) }
+                            Button("Hide from All Feed") { library.toggleChannelHidden(channel) }
+                            Button("Remove channel", role: .destructive) { pendingRemoval = channel }
                         }
+                    }
+                    avatar("Add", symbol: "plus", color: .cvPrimaryContainer) { showAddChannel = true }.accessibilityLabel("Add channel")
+                }
+            }.accessibilityIdentifier("media.channels.strip")
+        }
+    }
+
+    private var matchingChannels: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack {
+                ForEach(library.state.channels.filter { $0.displayName.localizedCaseInsensitiveContains(search) || $0.handle.localizedCaseInsensitiveContains(search) }) { channel in
+                    Button { selectedChannel = channel.id; search = "" } label: {
+                        HStack { CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 28); Text(channel.displayName).font(.caption) }
+                            .padding(8).background(Color.cvSurfaceContainer, in: Capsule())
                     }.buttonStyle(.plain)
                 }
             }
         }
     }
 
-    private func videoCard(_ video: LibraryVideo) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button { library.open(video); browser = BrowserDestination(video.url) } label: {
-                ZStack {
-                    AsyncImage(url: video.thumbnail.flatMap(URL.init(string:))) { image in image.resizable().scaledToFill() } placeholder: {
-                        Rectangle().fill(Color.cvSurfaceContainerHigh)
-                    }
-                    Image(systemName: "play.fill").font(.title2).foregroundStyle(.white)
-                        .frame(width: 48, height: 48).background(.black.opacity(0.5), in: Circle())
-                }.frame(height: 165).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 16))
-            }.buttonStyle(.plain).accessibilityLabel("Play \(video.title)")
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(video.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Text(video.channel).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+    private func avatar(_ title: String, symbol: String, color: Color, selected: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) { avatarLabel(title, symbol: symbol, color: color, selected: selected) }.buttonStyle(.plain).accessibilityLabel(title)
+    }
+
+    private func avatarLabel(_ title: String, symbol: String, color: Color, selected: Bool = false) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: symbol).font(.system(size: 23, weight: .semibold)).foregroundStyle(title == "All" || title == "Add" ? Color.cvPrimary : .white)
+                .frame(width: 50, height: 50).background(color.opacity(0.65), in: Circle()).padding(3)
+                .overlay(Circle().stroke(selected ? Color.cvPrimary : Color.clear, lineWidth: 2))
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(selected ? Color.cvPrimary : Color.cvOnSurfaceVariant).frame(width: 68)
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        HStack(spacing: 8) { RoundedRectangle(cornerRadius: 2).fill(Color.cvPrimary).frame(width: 3, height: 19); Text(title).font(.headline).foregroundStyle(Color.cvOnSurface) }
+    }
+
+    private func thumbnail(_ video: LibraryVideo, showDuration: Bool = true) -> some View {
+        GeometryReader { geometry in
+            AsyncImage(url: video.thumbnail.flatMap(URL.init(string:))) { image in
+                image.resizable().scaledToFill()
+            } placeholder: { ZStack { Color.cvSurfaceContainer; Image(systemName: "play.rectangle").foregroundStyle(Color.cvOnSurfaceVariant) } }
+                .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                .overlay(alignment: .bottomTrailing) {
+                    if let duration = video.durationSeconds, duration > 0, showDuration {
+                        Text(String(format: "%d:%02d", duration / 60, duration % 60)).font(.caption2.bold()).padding(4).background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 4)).padding(6).foregroundStyle(.white)
+                    } else if video.live == true { Text("LIVE").font(.caption2.bold()).padding(4).background(.red).padding(6).foregroundStyle(.white) }
                 }
-                Spacer(minLength: 0)
+        }.clipped()
+    }
+
+    private func metadata(_ video: LibraryVideo) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(video.channel).lineLimit(1)
+            if let views = video.viewCount, views > 0 { Text("\(views.formatted(.number.notation(.compactName))) views").lineLimit(1) }
+            else if video.publishedAt > 0 { Text(Date(timeIntervalSince1970: Double(video.publishedAt) / 1000), style: .relative).lineLimit(1) }
+        }.font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+    }
+
+    private func continueCard(_ video: LibraryVideo) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                Button { open(video) } label: {
+                    thumbnail(video, showDuration: false).frame(width: 196, height: 110)
+                        .overlay(alignment: .bottom) { ProgressView(value: Double(library.state.watchProgress?[video.id]?.fraction ?? 0)).tint(.cvPrimary) }
+                        .overlay(alignment: .bottomTrailing) {
+                            if let progress = library.state.watchProgress?[video.id] {
+                                Text("\(clock(progress.position)) / \(clock(progress.duration))").font(.caption2.bold()).foregroundStyle(.white)
+                                    .padding(4).background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4)).padding(7)
+                            }
+                        }
+                }.buttonStyle(.plain)
                 Menu {
-                    Button(library.state.saved.contains { $0.id == video.id } ? "Remove from saved" : "Save for later", systemImage: "bookmark") { library.toggleSave(video) }
-                    ForEach(library.state.playlists) { playlist in
-                        Button("Add to \(playlist.name)") {
-                            if let index = library.state.playlists.firstIndex(where: { $0.id == playlist.id }),
-                               !library.state.playlists[index].videos.contains(where: { $0.id == video.id }) {
-                                library.state.playlists[index].videos.append(video)
-                                library.persist()
+                    Button("Remove from Continue Watching") {
+                        if var progress = library.state.watchProgress?[video.id] {
+                            progress.dismissedFromContinue = true
+                            library.state.watchProgress?[video.id] = progress
+                            library.persist()
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).foregroundStyle(.white).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Continue Watching options")
+            }
+            Button { open(video) } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(video.title).font(.subheadline.bold()).lineLimit(2)
+                    Text(video.channel).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }.buttonStyle(.plain)
+        }.frame(width: 196).background(Color.cvSurfaceVariant.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func shortCard(_ video: LibraryVideo) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Button { open(video) } label: {
+                thumbnail(video, showDuration: false).frame(width: 136, height: 242)
+                    .overlay(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom))
+                    .overlay(alignment: .bottomLeading) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(video.title).font(.subheadline.bold()).lineLimit(2)
+                            Text(video.channel).font(.caption2).lineLimit(1)
+                        }.foregroundStyle(.white).padding(10)
+                    }
+            }.buttonStyle(.plain)
+            videoMenu(video).foregroundStyle(.white)
+        }.frame(width: 136, height: 242).clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func clock(_ seconds: Double) -> String {
+        let value = Int(max(0, seconds))
+        return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    private func videoRow(_ video: LibraryVideo) -> some View {
+        HStack(spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                Button { open(video) } label: { thumbnail(video).frame(width: 155, height: 102) }.buttonStyle(.plain)
+                videoMenu(video).foregroundStyle(.white)
+            }.frame(width: 155, height: 102)
+            Button { open(video) } label: {
+                VStack(alignment: .leading, spacing: 8) { Text(video.title).font(.subheadline.bold()).lineLimit(2); metadata(video) }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }.buttonStyle(.plain)
+        }.background(Color.cvSurfaceVariant.opacity(0.6), in: RoundedRectangle(cornerRadius: 14)).clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func videoMenu(_ video: LibraryVideo) -> some View {
+        Menu {
+                Button(library.state.saved.contains(video) ? "Unsave video" : "Save video") { library.toggleSave(video) }
+                Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
+                if !library.state.playlists.isEmpty {
+                    Menu("Add to playlist") {
+                        ForEach(library.state.playlists) { playlist in
+                            Button(playlist.name) {
+                                if let index = library.state.playlists.firstIndex(where: { $0.id == playlist.id }), !library.state.playlists[index].videos.contains(where: { $0.id == video.id }) { library.state.playlists[index].videos.append(video); library.persist() }
                             }
                         }
                     }
-                    ShareLink(item: video.url)
-                } label: { Image(systemName: "ellipsis").frame(width: 32, height: 32) }
-            }
+                }
+                ShareLink(item: video.url)
+        } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 44, height: 44).background(.black.opacity(0.25), in: Circle()) }
+            .accessibilityLabel("Options for \(video.title)")
+    }
+
+    private func open(_ video: LibraryVideo) { library.open(video); browser = BrowserDestination(video.url) }
+
+    private var emptyMessage: String {
+        if filter.content == .downloads { return "Downloads and device import are not connected in this iOS build. Web videos remain available in your feed." }
+        if filter.platform == .instagram || filter.platform == .x { return "\(filter.platform.label) feed loading is not connected yet. You can open saved profiles from the channel row." }
+        return search.isEmpty ? "Try changing the filters or add a channel using +." : "Try a different channel name or video title."
+    }
+
+    private func uniqueVideos(_ videos: [LibraryVideo]) -> [LibraryVideo] {
+        var seen = Set<String>()
+        return videos.filter { seen.insert($0.id).inserted }
+    }
+
+    private var channelManager: some View {
+        NavigationStack {
+            List(library.state.channels) { channel in
+                HStack { CVAvatar(name: channel.displayName, url: channel.iconUrl); VStack(alignment: .leading) { Text(channel.displayName); Text(channel.platformLabel).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant) }; Spacer(); Button("Open") { showChannels = false; selectedChannel = channel.id } }
+            }.navigationTitle("All channels").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showChannels = false } } }
+        }
+    }
+
+    private var hiddenChannels: some View {
+        NavigationStack {
+            List {
+                ForEach(library.state.channels.filter { (library.state.hiddenChannelIDs ?? []).contains($0.id) }) { channel in
+                    HStack { Text(channel.displayName); Spacer(); Button("Unhide") { library.toggleChannelHidden(channel) } }
+                }
+                if (library.state.hiddenChannelIDs ?? []).isEmpty { Text("No hidden channels").foregroundStyle(Color.cvOnSurfaceVariant) }
+            }.navigationTitle("Hidden channels").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showHiddenChannels = false } } }
+        }
+    }
+
+    private func videoCollection(_ title: String, videos: [LibraryVideo], hidden: Bool = false) -> some View {
+        NavigationStack {
+            List {
+                ForEach(uniqueVideos(videos)) { video in
+                    if hidden {
+                        HStack { Text(video.title).lineLimit(2); Spacer(); Button("Unhide") { library.state.hiddenVideoIDs?.removeAll { $0 == video.id }; library.persist() } }
+                    } else { Button { open(video) } label: { Label(video.title, systemImage: "play.circle") } }
+                }
+                if videos.isEmpty { Text("No \(title.lowercased())").foregroundStyle(Color.cvOnSurfaceVariant) }
+            }.navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showHiddenVideos = false; showSaved = false; showRecent = false } } }
+                .sheet(item: $browser) { BrowserSheet(url: $0.url) }
         }
     }
 }
-
 struct MediaDirectoryView: View {
     @Bindable var library: MediaLibrary
     @State private var search = ""
@@ -198,13 +419,13 @@ struct AddMediaLinkView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Save something worth watching") {
+                Section("Video URL") {
                     TextField("Title (optional)", text: $title)
                     TextField("https://…", text: $url).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 Text("YouTube, Instagram, X, and other web links open in the in-app browser.").font(.footnote)
                 if invalid { Text("Enter a valid http or https link.").foregroundStyle(Color.cvError) }
-            }.navigationTitle("Add a link").navigationBarTitleDisplayMode(.inline)
+            }.navigationTitle("Add video by URL").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {

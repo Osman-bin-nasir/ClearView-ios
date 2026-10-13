@@ -9,6 +9,10 @@ struct LibraryVideo: Codable, Identifiable, Equatable {
     var thumbnail: String?
     var isShort = false
     var publishedAt: Int64 = 0
+    var channelID: String?
+    var viewCount: Int64?
+    var durationSeconds: Int64?
+    var live: Bool?
 
     init(_ video: MediaVideo) {
         id = video.videoId
@@ -18,6 +22,10 @@ struct LibraryVideo: Codable, Identifiable, Equatable {
         thumbnail = video.thumbnailUrl
         isShort = video.isShort
         publishedAt = video.publishedAtEpochMillis
+        channelID = video.channelId
+        viewCount = video.viewCount
+        durationSeconds = video.durationSeconds
+        live = video.isLive
     }
 
     init(id: String = UUID().uuidString, title: String, channel: String = "Saved link", url: String, thumbnail: String? = nil) {
@@ -27,6 +35,23 @@ struct LibraryVideo: Codable, Identifiable, Equatable {
         self.url = url
         self.thumbnail = thumbnail
     }
+
+    var mediaVideo: MediaVideo {
+        let host = URL(string: url)?.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? ""
+        let platform: MediaPlatform = host == "instagram.com" ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube
+        return MediaVideo(videoId: id, title: title, channelId: channelID ?? "", channelName: channel,
+            publishedAtEpochMillis: publishedAt, thumbnailUrl: thumbnail ?? "", viewCount: viewCount ?? 0,
+            isShort: isShort, isLive: live ?? false, durationSeconds: durationSeconds ?? 0, platform: platform, sourceUrl: url)
+    }
+}
+
+struct MediaWatchProgress: Codable, Equatable {
+    var position: Double
+    var duration: Double
+    var updatedAt: Date
+    var dismissedFromContinue: Bool?
+
+    var fraction: Float { duration > 0 ? Float(min(1, max(0, position / duration))) : 0 }
 }
 
 struct MediaPlaylist: Codable, Identifiable {
@@ -42,6 +67,9 @@ struct MediaLibraryState: Codable {
     var recent: [LibraryVideo] = []
     var saved: [LibraryVideo] = []
     var feed: [LibraryVideo] = []
+    var hiddenVideoIDs: [String]?
+    var hiddenChannelIDs: [String]?
+    var watchProgress: [String: MediaWatchProgress]?
 }
 
 @MainActor
@@ -56,11 +84,50 @@ final class MediaLibrary {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        state = defaults.data(forKey: "media.library.v1").flatMap { try? JSONDecoder().decode(MediaLibraryState.self, from: $0) } ?? MediaLibraryState()
+        if let restored = defaults.data(forKey: "media.library.v1").flatMap({ try? JSONDecoder().decode(MediaLibraryState.self, from: $0) }) {
+            state = restored
+        } else {
+            state = MediaLibraryState()
+            state.channels = [DirectoryChannel(id: "UC2cX3SmsdWsrRS8t_5zvzEw", platform: "youtube", handle: "SafinaSociety",
+                name: "Safina Society", iconUrl: nil, url: "https://www.youtube.com/channel/UC2cX3SmsdWsrRS8t_5zvzEw",
+                categoryId: nil, subcategoryId: nil, sort: 0)]
+            persist()
+        }
     }
 
     func persist() {
         if let data = try? JSONEncoder().encode(state) { defaults.set(data, forKey: "media.library.v1") }
+    }
+
+    func filteredVideos(_ filter: FeedFilter, channelID: String? = nil, query: String = "") -> [LibraryVideo] {
+        guard filter.content != .downloads else { return [] }
+        var seen = Set<String>()
+        let combined = (state.feed + state.saved).filter { seen.insert($0.id).inserted }
+        let hiddenVideos = Set(state.hiddenVideoIDs ?? [])
+        let hiddenChannels = Set(state.hiddenChannelIDs ?? [])
+        let visible = combined.filter { video in
+            !hiddenVideos.contains(video.id) && (channelID != nil || !hiddenChannels.contains(video.channelID ?? ""))
+                && (channelID == nil || video.channelID == channelID)
+                && (query.isEmpty || video.title.localizedCaseInsensitiveContains(query) || video.channel.localizedCaseInsensitiveContains(query))
+        }
+        let filtered = FeedFilters.apply(visible.map(\.mediaVideo), filter: filter,
+            progressOf: { self.state.watchProgress?[$0]?.fraction },
+            isManual: { identifier in self.state.saved.contains { $0.id == identifier } && !self.state.feed.contains { $0.id == identifier } })
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        return filtered.compactMap { byID[$0.id] }
+    }
+
+    func hide(_ video: LibraryVideo) {
+        if !(state.hiddenVideoIDs ?? []).contains(video.id) { state.hiddenVideoIDs = (state.hiddenVideoIDs ?? []) + [video.id] }
+        persist()
+    }
+
+    func toggleChannelHidden(_ channel: DirectoryChannel) {
+        var hidden = state.hiddenChannelIDs ?? []
+        if hidden.contains(channel.id) { hidden.removeAll { $0 == channel.id } }
+        else { hidden.append(channel.id) }
+        state.hiddenChannelIDs = hidden
+        persist()
     }
 
     func loadDirectory() async {
@@ -68,9 +135,43 @@ final class MediaLibrary {
         let response = await repository.directory()
         if let value = response.value { directory = value }
         else { error = response.userMessage }
+        updateChannelMetadata()
+    }
+
+    private func updateChannelMetadata() {
+        for index in state.channels.indices {
+            let saved = state.channels[index]
+            guard let resolved = directory.allChannels.first(where: {
+                $0.platform.lowercased() == saved.platform.lowercased() && $0.handle.lowercased() == saved.handle.lowercased()
+            }) else { continue }
+            state.channels[index] = DirectoryChannel(id: saved.id, platform: saved.platform, handle: saved.handle,
+                name: resolved.name ?? saved.name, iconUrl: resolved.iconUrl ?? saved.iconUrl, url: saved.url,
+                categoryId: resolved.categoryId, subcategoryId: resolved.subcategoryId, sort: saved.sort)
+        }
+        persist()
+    }
+
+    var activeChannels: [DirectoryChannel] {
+        var latest: [String: Int64] = [:]
+        var counts: [String: Int] = [:]
+        for video in state.feed {
+            guard let channel = video.channelID else { continue }
+            latest[channel] = max(latest[channel] ?? 0, video.publishedAt)
+            counts[channel, default: 0] += 1
+        }
+        return state.channels.enumerated().sorted { first, second in
+            let firstTime = latest[first.element.id] ?? 0
+            let secondTime = latest[second.element.id] ?? 0
+            if firstTime != secondTime { return firstTime > secondTime }
+            let firstCount = counts[first.element.id] ?? 0
+            let secondCount = counts[second.element.id] ?? 0
+            if firstCount != secondCount { return firstCount > secondCount }
+            return first.offset > second.offset
+        }.map(\.element)
     }
 
     func refresh() async {
+        if ProcessInfo.processInfo.arguments.contains("--uitesting"), ProcessInfo.processInfo.environment["CLEARVIEW_MEDIA_FIXTURE"] != nil { return }
         guard !loading else { return }
         loading = true
         defer { loading = false }
@@ -108,25 +209,37 @@ final class MediaLibrary {
             guard let pageURL = URL(string: channel.url), pageURL.host == "www.youtube.com" || pageURL.host == "youtube.com" else { return nil }
             var request = URLRequest(url: pageURL)
             request.timeoutInterval = 20
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-            let html = String(decoding: data, as: UTF8.self)
-            let pattern = #"(?:channel_id=|/channel/|\"channelId\":\"|\"externalId\":\")(UC[A-Za-z0-9_-]{22})"#
-            let regex = try NSRegularExpression(pattern: pattern)
-            guard let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-                  let range = Range(match.range(at: 1), in: html) else { return nil }
-            let channelID = String(html[range])
+            let channelID: String
+            if pageURL.path.hasPrefix("/channel/"), pageURL.lastPathComponent.hasPrefix("UC") {
+                channelID = pageURL.lastPathComponent
+            } else {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+                let html = String(decoding: data, as: UTF8.self)
+                let pattern = #"(?:channel_id=|/channel/|\"channelId\":\"|\"externalId\":\")(UC[A-Za-z0-9_-]{22})"#
+                let regex = try NSRegularExpression(pattern: pattern)
+                guard let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                      let range = Range(match.range(at: 1), in: html) else { return nil }
+                channelID = String(html[range])
+            }
             let feedURL = URL(string: "https://www.youtube.com/feeds/videos.xml?channel_id=\(channelID)")!
             var feedRequest = URLRequest(url: feedURL)
             feedRequest.timeoutInterval = 20
             let (feed, feedResponse) = try await URLSession.shared.data(for: feedRequest)
             guard (feedResponse as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-            return YouTubeRssParser.parse(String(decoding: feed, as: UTF8.self)).map(LibraryVideo.init)
+            return YouTubeRssParser.parse(String(decoding: feed, as: UTF8.self)).map { source in
+                var video = LibraryVideo(source)
+                video.channelID = channel.id
+                return video
+            }
         } catch { return nil }
     }
 
     func subscribe(_ channel: DirectoryChannel) {
-        if state.channels.contains(where: { $0.id == channel.id }) { state.channels.removeAll { $0.id == channel.id } }
+        if state.channels.contains(where: { $0.id == channel.id }) {
+            state.channels.removeAll { $0.id == channel.id }
+            state.hiddenChannelIDs?.removeAll { $0 == channel.id }
+        }
         else { state.channels.append(channel) }
         persist()
     }

@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class AppStateTests: XCTestCase {
+
+    func testMediaLibraryRestoresLegacyStateWithoutAddingChannels() throws {
+        let suite = "MediaMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Data(#"{"channels":[],"playlists":[],"recent":[],"saved":[],"feed":[]}"#.utf8), forKey: "media.library.v1")
+        let model = MediaLibrary(defaults: defaults)
+        XCTAssertTrue(model.state.channels.isEmpty)
+        XCTAssertNil(model.state.watchProgress)
+    }
+
+    func testMediaFiltersUseRealProgressAndHideState() {
+        let suite = "MediaFiltering.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MediaLibrary(defaults: defaults)
+        var started = LibraryVideo(id: "started", title: "Started", channel: "Channel", url: "https://youtube.com/watch?v=started")
+        started.channelID = "channel"
+        var fresh = LibraryVideo(id: "fresh", title: "Fresh", channel: "Channel", url: "https://youtube.com/watch?v=fresh")
+        fresh.channelID = "channel"
+        model.state.feed = [started, fresh]
+        model.state.watchProgress = [started.id: MediaWatchProgress(position: 30, duration: 120, updatedAt: Date())]
+        var filter = FeedFilter(date: .allTime)
+        XCTAssertEqual(model.filteredVideos(filter).map(\.id), [fresh.id])
+        filter.watchStatus = .partiallyWatched
+        XCTAssertEqual(model.filteredVideos(filter).map(\.id), [started.id])
+        model.hide(started)
+        XCTAssertTrue(model.filteredVideos(filter).isEmpty)
+        model.persist()
+        let restored = MediaLibrary(defaults: defaults)
+        XCTAssertEqual(restored.state.hiddenVideoIDs, [started.id])
+        XCTAssertEqual(restored.state.watchProgress?[started.id]?.fraction, 0.25)
+        filter.watchStatus = .all
+        model.state.hiddenChannelIDs = ["channel"]
+        XCTAssertTrue(model.filteredVideos(filter).isEmpty)
+        XCTAssertEqual(model.filteredVideos(filter, channelID: "channel").map(\.id), [fresh.id])
+        filter.content = .downloads
+        XCTAssertTrue(model.filteredVideos(filter, channelID: "channel").isEmpty)
+    }
     func testTaskCompletionAndArchiveSurviveReload() {
         let suite = "AppStateTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
