@@ -14,7 +14,7 @@ final class DiscoveryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["quran.section.Search"].waitForExistence(timeout: 15))
         let search = app.textFields["discovery.search"]
         search.tap()
-        search.typeText("2:255")
+        search.typeText("2:255\n")
         let result = app.buttons["quran.result.2:255"]
         XCTAssertTrue(result.waitForExistence(timeout: 15))
         capture("Quran Search", app: app)
@@ -52,20 +52,28 @@ final class DiscoveryUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Continue Watching"].exists)
         XCTAssertTrue(app.staticTexts["Shorts"].exists)
         capture("Media Feed", app: app)
-        app.swipeUp()
+        for _ in 0..<3 {
+            if app.staticTexts["Regular test video"].isHittable { break }
+            app.swipeUp()
+        }
         XCTAssertTrue(app.staticTexts["Regular test video"].waitForExistence(timeout: 10))
         capture("Media Videos", app: app)
         app.swipeDown()
         app.swipeDown()
         app.buttons["media.filters"].tap()
         XCTAssertTrue(app.navigationBars["Filter"].waitForExistence(timeout: 10))
-        for title in ["Date", "Platform", "Content", "Source", "Watch status", "Sort by"] { XCTAssertTrue(app.staticTexts[title].exists) }
+        for title in ["Date", "Platform", "Content", "Source", "Watch status", "Sort by"] {
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "media.filter.\(title)").firstMatch.exists)
+        }
         capture("Media Filters", app: app)
+        app.descendants(matching: .any).matching(identifier: "media.filter.Platform").firstMatch.tap()
+        app.buttons["Instagram"].tap()
+        capture("Media Platform Filter", app: app)
         app.buttons["Cancel"].tap()
         app.buttons["media.search"].tap()
         let search = app.textFields["media.search.field"]
         search.tap()
-        search.typeText("Regular")
+        search.typeText("Regular\n")
         XCTAssertTrue(app.staticTexts["Regular test video"].exists)
         XCTAssertFalse(app.staticTexts["Shorts test video"].exists)
         app.buttons["media.search"].tap()

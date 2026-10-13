@@ -6,9 +6,11 @@ struct AddMediaChannelView: View {
     @State private var platform: FeedPlatformFilter?
     @State private var input = ""
     @State private var error: String?
+    @State private var detent: PresentationDetent = .medium
 
     var body: some View {
         NavigationStack {
+            ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Choose a platform, then enter its @handle or profile URL.").font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
                 HStack(spacing: 8) {
@@ -24,13 +26,18 @@ struct AddMediaChannelView: View {
                         Text("The profile is saved to your channels. \(platform.label) feed loading is not yet connected on iOS.").font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
                     }
                     if let error { Text(error).font(.footnote).foregroundStyle(Color.cvError) }
-                    CVButton(title: "Add", style: .filled) { add(platform) }
-                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Spacer()
-            }.padding(20).background(Color.cvBackground).navigationTitle("Add channel / profile").navigationBarTitleDisplayMode(.inline)
+            }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            }.background(Color.cvBackground).navigationTitle("Add channel / profile").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-        }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+                .safeAreaInset(edge: .bottom) {
+                    if let platform {
+                        CVButton(title: "Add", style: .filled, enabled: !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, expand: true) { add(platform) }
+                            .padding(20).background(Color.cvBackground)
+                    }
+                }
+                .onChange(of: platform) { _, value in if value != nil { detent = .large } }
+        }.presentationDetents([.medium, .large], selection: $detent).presentationDragIndicator(.visible)
     }
 
     private func add(_ platform: FeedPlatformFilter) {
@@ -85,10 +92,10 @@ struct MediaFilterSheet: View {
                     }
                     choices("Platform", selection: $draft.platform, options: FeedPlatformFilter.allCases, label: { $0.label })
                     choices("Content", selection: $draft.content, options: FeedFilters.contentOptions(for: draft.platform), label: { $0.label })
-                    choices("Source", selection: $draft.source, options: FeedSourceFilter.allCases, label: { $0.label })
+                    choices("Source", selection: $draft.source, options: FeedSourceFilter.allCases.filter { $0 != .byRss || draft.source == .byRss }, label: { $0.label })
                     choices("Watch status", selection: $draft.watchStatus, options: FeedWatchStatus.allCases, label: { $0.label })
                     choices("Sort by", selection: $draft.sort, options: FeedSortOrder.allCases, label: { $0.label })
-                    Text("Watch status uses recorded playback progress, not whether a link was opened.").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    Text("Embedded playback progress is not connected yet. Browser visits appear in Recently opened and are not marked watched.").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                 }.padding(20)
             }.background(Color.cvBackground).navigationTitle("Filter").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -113,15 +120,14 @@ struct MediaFilterSheet: View {
 
     private func choices<Choice: Hashable>(_ title: String, selection: Binding<Choice>, options: [Choice], label: @escaping (Choice) -> String) -> some View {
         DisclosureGroup(isExpanded: Binding(get: { expanded == title }, set: { expanded = $0 ? title : nil })) {
-            VStack(spacing: 0) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
                 ForEach(options, id: \.self) { option in
                     Button { selection.wrappedValue = option } label: {
-                        HStack {
-                            Text(label(option)).font(.subheadline).foregroundStyle(Color.cvOnSurface)
-                            Spacer()
-                            Image(systemName: selection.wrappedValue == option ? "checkmark.circle.fill" : "circle").foregroundStyle(Color.cvPrimary)
-                        }.padding(.vertical, 12).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
+                        Text(label(option)).font(.caption.weight(.medium)).multilineTextAlignment(.center)
+                            .foregroundStyle(selection.wrappedValue == option ? Color.cvPrimary : Color.cvOnSurfaceVariant)
+                            .frame(maxWidth: .infinity).padding(.horizontal, 10).padding(.vertical, 10)
+                            .background(selection.wrappedValue == option ? Color.cvPrimaryContainer : Color.cvSurfaceContainerHigh, in: Capsule())
+                    }.buttonStyle(.plain).accessibilityAddTraits(selection.wrappedValue == option ? .isSelected : [])
                 }
             }.padding(.top, 8)
         } label: {
@@ -131,6 +137,7 @@ struct MediaFilterSheet: View {
                 Text(label(selection.wrappedValue)).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
             }.padding(.vertical, 8)
         }.padding(12).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityIdentifier("media.filter.\(title)")
     }
 }
 

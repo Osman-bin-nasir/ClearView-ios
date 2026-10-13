@@ -4,11 +4,13 @@ struct CVSearchField: View {
     @Binding var text: String
     let prompt: String
     var identifier = "discovery.search"
+    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(Color.cvOnSurfaceVariant)
             TextField(prompt, text: $text).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .focused($focused).submitLabel(.search).onSubmit { focused = false }
                 .accessibilityIdentifier(identifier)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }

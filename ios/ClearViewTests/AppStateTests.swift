@@ -39,6 +39,8 @@ final class AppStateTests: XCTestCase {
         model.state.hiddenChannelIDs = ["channel"]
         XCTAssertTrue(model.filteredVideos(filter).isEmpty)
         XCTAssertEqual(model.filteredVideos(filter, channelID: "channel").map(\.id), [fresh.id])
+        filter.content = .downloads
+        XCTAssertTrue(model.filteredVideos(filter, channelID: "channel").isEmpty)
     }
     func testTaskCompletionAndArchiveSurviveReload() {
         let suite = "AppStateTests.\(UUID().uuidString)"

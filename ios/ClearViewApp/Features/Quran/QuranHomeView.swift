@@ -33,6 +33,7 @@ struct QuranLibraryView: View {
                             .foregroundStyle(section == option ? Color.cvPrimary : Color.cvOnSurfaceVariant)
                             .background(section == option ? Color.cvPrimaryContainer : Color.cvSurfaceContainer, in: Capsule())
                     }.buttonStyle(.plain).accessibilityIdentifier("quran.section.\(option.rawValue)")
+                        .accessibilityAddTraits(section == option ? .isSelected : [])
                 }
             }.padding(.horizontal, 16)
             if section == .bookmarks {

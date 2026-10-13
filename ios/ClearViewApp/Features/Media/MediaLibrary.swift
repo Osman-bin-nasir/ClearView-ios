@@ -37,8 +37,8 @@ struct LibraryVideo: Codable, Identifiable, Equatable {
     }
 
     var mediaVideo: MediaVideo {
-        let host = URL(string: url)?.host?.lowercased() ?? ""
-        let platform: MediaPlatform = host.contains("instagram.com") ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube
+        let host = URL(string: url)?.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? ""
+        let platform: MediaPlatform = host == "instagram.com" ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube
         return MediaVideo(videoId: id, title: title, channelId: channelID ?? "", channelName: channel,
             publishedAtEpochMillis: publishedAt, thumbnailUrl: thumbnail ?? "", viewCount: viewCount ?? 0,
             isShort: isShort, isLive: live ?? false, durationSeconds: durationSeconds ?? 0, platform: platform, sourceUrl: url)
@@ -49,6 +49,7 @@ struct MediaWatchProgress: Codable, Equatable {
     var position: Double
     var duration: Double
     var updatedAt: Date
+    var dismissedFromContinue: Bool?
 
     var fraction: Float { duration > 0 ? Float(min(1, max(0, position / duration))) : 0 }
 }
@@ -99,6 +100,7 @@ final class MediaLibrary {
     }
 
     func filteredVideos(_ filter: FeedFilter, channelID: String? = nil, query: String = "") -> [LibraryVideo] {
+        guard filter.content != .downloads else { return [] }
         var seen = Set<String>()
         let combined = (state.feed + state.saved).filter { seen.insert($0.id).inserted }
         let hiddenVideos = Set(state.hiddenVideoIDs ?? [])
@@ -133,6 +135,39 @@ final class MediaLibrary {
         let response = await repository.directory()
         if let value = response.value { directory = value }
         else { error = response.userMessage }
+        updateChannelMetadata()
+    }
+
+    private func updateChannelMetadata() {
+        for index in state.channels.indices {
+            let saved = state.channels[index]
+            guard let resolved = directory.allChannels.first(where: {
+                $0.platform.lowercased() == saved.platform.lowercased() && $0.handle.lowercased() == saved.handle.lowercased()
+            }) else { continue }
+            state.channels[index] = DirectoryChannel(id: saved.id, platform: saved.platform, handle: saved.handle,
+                name: resolved.name ?? saved.name, iconUrl: resolved.iconUrl ?? saved.iconUrl, url: saved.url,
+                categoryId: resolved.categoryId, subcategoryId: resolved.subcategoryId, sort: saved.sort)
+        }
+        persist()
+    }
+
+    var activeChannels: [DirectoryChannel] {
+        var latest: [String: Int64] = [:]
+        var counts: [String: Int] = [:]
+        for video in state.feed {
+            guard let channel = video.channelID else { continue }
+            latest[channel] = max(latest[channel] ?? 0, video.publishedAt)
+            counts[channel, default: 0] += 1
+        }
+        return state.channels.enumerated().sorted { first, second in
+            let firstTime = latest[first.element.id] ?? 0
+            let secondTime = latest[second.element.id] ?? 0
+            if firstTime != secondTime { return firstTime > secondTime }
+            let firstCount = counts[first.element.id] ?? 0
+            let secondCount = counts[second.element.id] ?? 0
+            if firstCount != secondCount { return firstCount > secondCount }
+            return first.offset > second.offset
+        }.map(\.element)
     }
 
     func refresh() async {
@@ -201,7 +236,10 @@ final class MediaLibrary {
     }
 
     func subscribe(_ channel: DirectoryChannel) {
-        if state.channels.contains(where: { $0.id == channel.id }) { state.channels.removeAll { $0.id == channel.id } }
+        if state.channels.contains(where: { $0.id == channel.id }) {
+            state.channels.removeAll { $0.id == channel.id }
+            state.hiddenChannelIDs?.removeAll { $0 == channel.id }
+        }
         else { state.channels.append(channel) }
         persist()
     }
