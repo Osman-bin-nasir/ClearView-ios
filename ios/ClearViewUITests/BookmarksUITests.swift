@@ -69,6 +69,31 @@ final class BookmarksUITests: XCTestCase {
         surahs.tap()
     }
 
+    /// Scrolls a surah back to its top, and fails if it cannot get there.
+    ///
+    /// A bounded loop rather than a count of swipes, because a count is a guess
+    /// about how much of the surah fits on a screen — and that changed the moment
+    /// the reader became a mushaf page: 30-point Arabic at a 2.0 line box is a verse
+    /// to a screen, where the old cards fitted two or three.
+    ///
+    /// The header is the signal: it is the one thing on the page that is only
+    /// visible at the very top, and the reader saves the reading position, so a
+    /// surah opened from this list may well not start at its first ayah.
+    private func scrollToTop(_ app: XCUIApplication, surah: Int, file: StaticString = #filePath, line: UInt = #line) {
+        let header = app.staticTexts
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Surah \(surah) · "))
+            .firstMatch
+        for _ in 0..<40 where !header.isHittable {
+            app.swipeDown()
+        }
+        XCTAssertTrue(
+            header.isHittable,
+            "the surah must be back at its top before anything below is asserted",
+            file: file,
+            line: line
+        )
+    }
+
     /// The whole flow, plus the assertion that the explicit verse wins.
     func testBookmarkedVerseIsReachableAndOpensAtThatVerse() {
         let app = XCUIApplication()
@@ -82,7 +107,16 @@ final class BookmarksUITests: XCTestCase {
         let alBaqara = app.staticTexts["Al-Baqara"]
         XCTAssertTrue(alBaqara.waitForExistence(timeout: listTimeout), "the surah list must appear")
         alBaqara.tap()
-        for _ in 0..<4 { app.swipeDown() }   // normalise to the top of the surah
+        // Pushed, then brought back to its top.
+        //
+        // The push is asserted on the navigation bar first, because "the surah never
+        // opened" and "it opened at a saved position I did not scroll back from"
+        // look identical if the only check is for body text.
+        XCTAssertTrue(
+            app.navigationBars["Al-Baqara"].waitForExistence(timeout: 30),
+            "tapping a surah must push the reader"
+        )
+        scrollToTop(app, surah: 2)
 
         XCTAssertTrue(app.staticTexts["2:1"].waitForExistence(timeout: 30), "the surah must open")
 

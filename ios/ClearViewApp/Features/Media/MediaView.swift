@@ -18,10 +18,20 @@ struct MediaView: View {
     @State private var pendingRemoval: DirectoryChannel?
     @State private var filter = FeedFilter()
 
-    private var videos: [LibraryVideo] { library.filteredVideos(filter, channelID: selectedChannel, query: search) }
+    /// The app's Protection model: the Block tab's rules, shared with the feed.
+    ///
+    /// The same instance the Protection tab edits, so a keyword added there hides the
+    /// next feed this view draws. This is the half of the Android product iOS can
+    /// reproduce — the app's own surfaces — and it is why the tab's switches mean
+    /// something here rather than describing a service that is not running.
+    private var protection: ProtectionModel { .shared }
+
+    private var videos: [LibraryVideo] {
+        protectedVideos(library.filteredVideos(filter, channelID: selectedChannel, query: search))
+    }
     private var currentChannel: DirectoryChannel? { library.state.channels.first { $0.id == selectedChannel } }
     private var continuing: [LibraryVideo] {
-        (library.state.recent + library.state.feed).reduce(into: [LibraryVideo]()) { collected, video in
+        protectedVideos((library.state.recent + library.state.feed).reduce(into: [LibraryVideo]()) { collected, video in
             guard !collected.contains(where: { $0.id == video.id }), !video.isShort, video.live != true,
                   (selectedChannel == nil || video.channelID == selectedChannel),
                   (selectedChannel != nil || !(library.state.hiddenChannelIDs ?? []).contains(video.channelID ?? "")),
@@ -30,7 +40,96 @@ struct MediaView: View {
                   progress.dismissedFromContinue != true,
                   progress.fraction < FeedFilters.watchedFractionThreshold else { return }
             collected.append(video)
-        }.sorted { (library.state.watchProgress?[$0.id]?.updatedAt ?? .distantPast) > (library.state.watchProgress?[$1.id]?.updatedAt ?? .distantPast) }
+        }.sorted { (library.state.watchProgress?[$0.id]?.updatedAt ?? .distantPast) > (library.state.watchProgress?[$1.id]?.updatedAt ?? .distantPast) })
+    }
+
+    // ── Protection ─────────────────────────────────────────────────
+
+    /// The list after Protection has had its say.
+    ///
+    /// A filter over the model rather than a second copy of it: the feed keeps every video
+    /// it loaded, and this decides which of them are drawn. Turning Protection off brings
+    /// them all straight back, which a destructive filter could not do.
+    private func protectedVideos(_ videos: [LibraryVideo]) -> [LibraryVideo] {
+        let options = protection.enforcementOptions
+        guard options.protectionEnabled else { return videos }
+        let kept = ProtectionEnforcer.keptIDs(
+            videos.map(subject(for:)),
+            rules: protection.rules(),
+            options: options
+        )
+        return videos.filter { kept.contains($0.id) }
+    }
+
+    /// One library video in the terms the rules are written in.
+    ///
+    /// The channel handle comes from the subscription when it is known, because a channel
+    /// block is stored by handle — the display name is only what the feed shows.
+    private func subject(for video: LibraryVideo) -> ProtectionSubject {
+        let platform = (video.platform ?? "").uppercased()
+        let isYouTube = platform == "YOUTUBE"
+            || video.url.contains("youtube.com")
+            || video.url.contains("youtu.be")
+        return ProtectionSubject(
+            id: video.id,
+            title: video.title,
+            description: video.bodyText,
+            channelName: video.channel,
+            channelHandle: library.state.channels.first { $0.id == video.channelID }?.handle,
+            url: video.sourceURL ?? video.url,
+            isYouTube: isYouTube,
+            isShort: video.isShort
+        )
+    }
+
+    /// How many items Protection is hiding from the current feed.
+    private var hiddenByProtection: Int {
+        let options = protection.enforcementOptions
+        guard options.protectionEnabled else { return 0 }
+        let all = library.filteredVideos(filter, channelID: selectedChannel, query: search)
+        return protection.enforcement(for: all.map(subject(for:))).hiddenCount
+    }
+
+    /// A value that changes exactly when Protection could hide something different.
+    ///
+    /// Used as a task's id so the activity log is written when the rules or the feed
+    /// change — and never while a frame is being drawn.
+    private var protectionStamp: String {
+        let options = protection.enforcementOptions
+        return [
+            options.protectionEnabled ? "on" : "off",
+            options.youTubeProtection ? "yt" : "-",
+            options.blockShorts ? "shorts" : "-",
+            options.strictMode ? "strict" : "-",
+            "\(protection.userKeywords.count)",
+            "\(protection.youTubeKeywords.count)",
+            "\(protection.blockedChannels.count)",
+            "\(protection.blockedDomains.count)",
+            protection.store.globalRules.version,
+            "\(library.state.feed.count)",
+        ].joined(separator: "|")
+    }
+
+    /// Write the blocks this feed produced into the Protection activity.
+    private func noteProtectionBlocks() {
+        guard protection.enforcementOptions.protectionEnabled else { return }
+        let all = library.filteredVideos(filter, channelID: selectedChannel, query: search)
+        protection.noteHidden(protection.enforcement(for: all.map(subject(for:))).hidden)
+    }
+
+    private var protectionNote: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shield.fill").font(.system(size: 13)).foregroundStyle(Color.cvPrimary)
+            Text(hiddenByProtection == 1
+                 ? "1 item hidden by Protection"
+                 : "\(hiddenByProtection) items hidden by Protection")
+                .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("media.protection-note")
     }
 
     var body: some View {
@@ -39,6 +138,7 @@ struct MediaView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     channels
                     feedHeader
+                    if hiddenByProtection > 0 { protectionNote }
                     if searchOpen {
                         CVSearchField(text: $search, prompt: "Search channels and videos", identifier: "media.search.field")
                         if !search.isEmpty { matchingChannels }
@@ -94,6 +194,9 @@ struct MediaView: View {
                     }
                     await library.refresh()
                 }
+                // The activity log is written when the rules or the feed change, from a
+                // task rather than a view body — see `protectionStamp`.
+                .task(id: protectionStamp) { noteProtectionBlocks() }
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
                 .sheet(isPresented: $showAdd) { AddMediaLinkView(library: library) }
                 .sheet(isPresented: $showAddChannel) { AddMediaChannelView(library: library) }

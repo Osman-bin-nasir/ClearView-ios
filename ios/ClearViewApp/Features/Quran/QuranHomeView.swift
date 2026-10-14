@@ -112,7 +112,28 @@ struct QuranLibraryView: View {
                                 NavigationLink { SurahReaderView(surah: surah, repository: model.repository, openAt: verse.ayahNumber) } label: {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text("\(verse.surahName) · \(verse.surahNumber):\(verse.ayahNumber)").font(.subheadline.bold()).foregroundStyle(Color.cvPrimary)
-                                        if !verse.arabicText.isEmpty { Text(verse.arabicText).frame(maxWidth: .infinity, alignment: .trailing) }
+                                        if !verse.arabicText.isEmpty {
+                                            // The Quran's own face, at the compact list
+                                            // size and following the reader's text
+                                            // scale — Android's `VerseSearchRow`
+                                            // (`quranFontSize(18f)` + `QuranFontFamily`).
+                                            // Without it this one surface draws
+                                            // scripture in the system font, so a verse
+                                            // looks different here than in the reader
+                                            // it opens.
+                                            Text(verse.arabicText)
+                                                .font(QuranTypography.font(
+                                                    baseSize: QuranTypography.listBaseSize,
+                                                    scale: model.arabicTextScale
+                                                ))
+                                                .lineSpacing(QuranTypography.lineSpacing(
+                                                    baseSize: QuranTypography.listBaseSize,
+                                                    scale: model.arabicTextScale
+                                                ))
+                                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                                .environment(\.layoutDirection, .rightToLeft)
+                                                .lineLimit(2)
+                                        }
                                         Text(verse.text).font(.callout).foregroundStyle(Color.cvOnSurface)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
                                         .background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))

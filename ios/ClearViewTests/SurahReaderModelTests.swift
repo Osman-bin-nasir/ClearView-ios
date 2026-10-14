@@ -147,6 +147,70 @@ final class SurahReaderModelTests: XCTestCase {
         XCTAssertEqual(ayahs.count, model.surah.ayahCount, "the header count must match the verses rendered")
     }
 
+    // MARK: - The basmala
+
+    /// The line above the first verse is the edition's own Al-Faatiha 1:1.
+    ///
+    /// Taken from the text rather than typed here, because the basmala is the one
+    /// line of a surah that is not a numbered ayah and a hand-typed copy would
+    /// re-decide its harakat and its waqf mark — which is exactly how the app ends
+    /// up disagreeing with the scripture it prints underneath it.
+    func testTheBasmalaComesFromTheEditionsOwnAlFaatiha() async throws {
+        try cache.write(.english, json: edition([(2, 1, "Alif Lam Meem"), (2, 2, "This is the Book")]))
+        try cache.write(.arabic, json: edition([(1, 1, "بِسْمِ ٱللَّهِ"), (2, 1, "الٓمٓ"), (2, 2, "ذَٰلِكَ")]))
+
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 2, name: "Al-Baqara", translation: "The Cow", ayahCount: 2),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher())
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.basmala, "بِسْمِ ٱللَّهِ")
+    }
+
+    /// At-Tawba is the one surah that opens without it.
+    ///
+    /// The Arabic edition is present and does contain a 1:1, so a blank head here
+    /// is the rule being applied rather than the text being missing — which is the
+    /// distinction a test that only checked for "blank" could not make.
+    func testAtTawbaOpensWithoutTheBasmala() async throws {
+        try cache.write(.english, json: edition([(9, 1, "A declaration from Allah")]))
+        try cache.write(.arabic, json: edition([(1, 1, "بِسْمِ ٱللَّهِ"), (9, 1, "بَرَآءَةٌ")]))
+
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 9, name: "At-Tawba", translation: "The Repentance", ayahCount: 1),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher())
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.basmala, "")
+        guard case .ready(let ayahs) = model.state else {
+            return XCTFail("expected .ready, got \(model.state)")
+        }
+        XCTAssertEqual(ayahs.map(\.arabic), ["بَرَآءَةٌ"], "the verses still render")
+    }
+
+    /// With no Arabic edition the head is blank rather than invented — a missing
+    /// line is better than a fabricated one, and the reader still opens in English.
+    func testTheBasmalaIsBlankWhenTheArabicIsNotOnTheDevice() async throws {
+        try cache.write(.english, json: edition([(2, 1, "Alif Lam Meem")]))
+
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 2, name: "Al-Baqara", translation: "The Cow", ayahCount: 1),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher())
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.basmala, "")
+        guard case .ready(let ayahs) = model.state else {
+            return XCTFail("expected .ready, got \(model.state)")
+        }
+        XCTAssertEqual(ayahs.map(\.arabic), [""])
+    }
+
     // MARK: - Helpers
 
     private func edition(_ ayahs: [(surah: Int, ayah: Int, text: String)]) -> String {

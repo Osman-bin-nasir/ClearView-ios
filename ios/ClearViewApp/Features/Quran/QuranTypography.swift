@@ -53,20 +53,65 @@ enum QuranTypography {
     /// which is a build mistake rather than a state a reader can reach — but one
     /// that must not take the Quran tab down.
     static func font(baseSize: CGFloat, scale: CGFloat) -> Font {
+        guard let face = uiFont(baseSize: baseSize, scale: scale) else {
+            return .system(size: baseSize * scale)
+        }
+        return Font(face)
+    }
+
+    /// The built `UIFont` behind `font(baseSize:scale:)` — the Mushaf face with
+    /// the fallback chained behind it, or nil when the face is not in the bundle.
+    ///
+    /// Split out of `font` for one reason: a SwiftUI `Font` cannot be inspected, so
+    /// "the Arabic is set in the Quran's own face" would otherwise be a property
+    /// nothing could assert — and it is precisely the property that fails
+    /// *silently*, by drawing Arabic in the system font with a different face's
+    /// mark anchors rather than by failing to build.
+    static func uiFont(baseSize: CGFloat, scale: CGFloat) -> UIFont? {
         let size = baseSize * scale
-        guard let primary = UIFont(name: primaryFace, size: size) else {
-            return .system(size: size)
-        }
-        var attributes: [UIFontDescriptor.AttributeName: Any] = [:]
-        if UIFont(name: fallbackFace, size: size) != nil {
-            attributes[UIFontDescriptor.AttributeName(rawValue: kCTFontCascadeListAttribute as String)] = [
-                CTFontDescriptorCreateWithNameAndSize(fallbackFace as CFString, size)
-            ]
-        }
-        let descriptor = attributes.isEmpty
-            ? primary.fontDescriptor
-            : primary.fontDescriptor.addingAttributes(attributes)
-        return Font(UIFont(descriptor: descriptor, size: size))
+        guard let primary = UIFont(name: primaryFace, size: size) else { return nil }
+        let cascade = cascadeDescriptors(size: size)
+        guard !cascade.isEmpty else { return primary }
+        let descriptor = primary.fontDescriptor.addingAttributes([
+            UIFontDescriptor.AttributeName(rawValue: kCTFontCascadeListAttribute as String): cascade
+        ])
+        return UIFont(descriptor: descriptor, size: size)
+    }
+
+    /// The faces chained behind the primary one for the codepoints it does not
+    /// carry — empty when the fallback face is not in the bundle, in which case the
+    /// head of the chain is all there is.
+    ///
+    /// A function of its own so the chain can be asserted: what it holds is the part
+    /// iOS does not do by itself, and a descriptor assembled without it draws the
+    /// seven uncovered codepoints with the *system's* fallback face instead of the
+    /// one Android uses.
+    static func cascadeDescriptors(size: CGFloat) -> [CTFontDescriptor] {
+        guard UIFont(name: fallbackFace, size: size) != nil else { return [] }
+        return [CTFontDescriptorCreateWithNameAndSize(fallbackFace as CFString, size)]
+    }
+
+    /// The ayah's own number, as a mushaf writes it: the end-of-ayah ornament
+    /// `۝` followed by the number in Arabic-Indic digits.
+    ///
+    /// Android's `arabicDigits`, and the reason neither reader carries a separate
+    /// counter or a Western numeral badge: a printed mushaf states the position
+    /// *inside* the running text, at the end of the verse it closes, and the
+    /// reader that adds a second numbering on the side is the one that looks
+    /// wrong next to a page of scripture.
+    static func ayahOrnament(_ ayahNumber: Int32) -> String {
+        "۝" + arabicDigits(ayahNumber)
+    }
+
+    /// `12` → `١٢` — the digits U+0660–U+0669, the same mapping Android's
+    /// `arabicDigits` uses, so the two platforms number a verse identically.
+    static func arabicDigits(_ value: Int32) -> String {
+        String(value).map { character in
+            guard let digit = character.wholeNumberValue, (0...9).contains(digit) else {
+                return String(character)
+            }
+            return String(UnicodeScalar(0x0660 + digit)!)
+        }.joined()
     }
 
     /// The line spacing that keeps pace with `font(baseSize:scale:)`.

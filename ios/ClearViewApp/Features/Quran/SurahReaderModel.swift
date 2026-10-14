@@ -48,6 +48,17 @@ final class SurahReaderModel {
 
     private(set) var isStarred = false
 
+    /// The line that opens the surah, taken from the edition's own 1:1 —
+    /// basmala, wasla and all — rather than typed out here.
+    ///
+    /// Typed here it would mean re-deciding its harakat and its waqf mark by hand
+    /// on the one line of a surah that is not a numbered ayah, and the edition
+    /// already states it. Blank for At-Tawba, which is the one surah that opens
+    /// without it, and blank when the Arabic edition is not on the device — a
+    /// missing line is better than an invented one. Same rule as Android's
+    /// `SurahHead`.
+    private(set) var basmala = ""
+
     /// The reader's Arabic text scale, read from the store so the reader opens at
     /// the size the reader last chose.
     private(set) var arabicTextScale = QuranStore.Default.arabicTextScale
@@ -73,7 +84,21 @@ final class SurahReaderModel {
         self.openAt = openAt
     }
 
+    /// The basmala as the edition writes it: its own Al-Faatiha 1:1, or nothing
+    /// for At-Tawba.
+    private func basmalaFor(_ surahNumber: Int32) async -> String {
+        guard surahNumber != Self.atTawba else { return "" }
+        let opening = await repository.arabicTexts(inSurah: Self.alFaatiha)
+        return opening[1] ?? ""
+    }
+
     private let openAt: Int32?
+
+    /// Al-Faatiha — where the basmala is read from, as the edition states it.
+    private static let alFaatiha: Int32 = 1
+
+    /// At-Tawba, the one surah that opens without the basmala.
+    private static let atTawba: Int32 = 9
 
     /// Re-reads where the reader left off, for a reader that is being shown again.
     ///
@@ -105,6 +130,7 @@ final class SurahReaderModel {
             // hand, and it may be absent — the reader then renders the English
             // alone rather than failing, exactly as the Android reader does.
             let arabic = await repository.arabicTexts(inSurah: surahNumber)
+            basmala = await basmalaFor(surahNumber)
             state = .ready(
                 verses.map { verse in
                     Ayah(verse: verse, arabic: arabic[verse.ayahNumber] ?? "")

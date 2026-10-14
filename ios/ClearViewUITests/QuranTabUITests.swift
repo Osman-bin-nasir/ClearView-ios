@@ -70,7 +70,7 @@ final class QuranTabUITests: XCTestCase {
     /// Only a real relaunch can test this — the store is `UserDefaults` inside the
     /// app's own container, and a unit test with an injected suite proves the
     /// codec, not that the app writes and reads the same place across two launches.
-    func testReadingPositionSurvivesRelaunch() {
+    func testReadingPositionSurvivesRelaunch() throws {
         let app = XCUIApplication()
         app.launchArguments = Self.cleanLaunch
         app.launch()
@@ -87,6 +87,18 @@ final class QuranTabUITests: XCTestCase {
         for _ in 0..<4 { app.swipeUp() }
         XCTAssertFalse(app.staticTexts["2:1"].isHittable, "scrolling must move the first ayah off screen")
         scrollUntilOnScreen("2:12", in: app)
+
+        // The ayah the reader is looking at when it leaves — the one the relaunch
+        // has to bring back.
+        //
+        // Read off the screen rather than fixed at `2:12`, because the reader saves
+        // the ayah at the TOP of the page while the mushaf page shows about a verse
+        // to a screen: the verse that was scrolled to and the verse at the top are
+        // pages apart, so demanding the fixed one would be demanding that the reader
+        // reopen *below* where it was left. The ayah that must come back is the one
+        // at the top, which is what is recorded here.
+        let leftOn = topVisibleAyah(in: app, surah: 2)
+        XCTAssertNotNil(leftOn, "the reader must be able to see which ayah it is on")
 
         // Leave the reader, then leave the app entirely and come back.
         leaveReader(app)
@@ -111,14 +123,15 @@ final class QuranTabUITests: XCTestCase {
         // It must render — and it must NOT be at the first ayah, which is the
         // only observable difference between "restored" and "started over".
         XCTAssertTrue(
-            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2:'"))
+            app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH '2:'"))
                 .firstMatch
                 .waitForExistence(timeout: 30),
             "the surah must render after relaunch"
         )
         // The reader must come back to the ayah it was left on — asserted as "that
         // ayah is on screen again" for the reason the test above gives.
-        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: app.staticTexts["2:12"], handler: nil)
+        let target = try XCTUnwrap(leftOn)
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: app.staticTexts[target], handler: nil)
         waitForExpectations(timeout: 30)
     }
 
@@ -350,13 +363,20 @@ final class QuranTabUITests: XCTestCase {
 
     /// The ayah the reader is actually looking at: the smallest-numbered `surah:n`
     /// label currently on screen.
+    ///
+    /// Addressed by **identifier**, not by label. The reader numbers a verse the
+    /// way a mushaf does — the ornament `۝` inside the Arabic — so the visible text
+    /// of a verse no longer begins with "2:". `2:12` is still what the verse
+    /// answers to, as an accessibility identifier on the verse's own text, and that
+    /// is what a test should be reading: the label is scripture now, and the
+    /// identifier is the stable name for it.
     private func topVisibleAyah(in app: XCUIApplication, surah: Int) -> String? {
         let prefix = "\(surah):"
         return app.staticTexts.allElementsBoundByIndex
-            .filter { $0.isHittable && $0.label.hasPrefix(prefix) }
+            .filter { $0.isHittable && $0.identifier.hasPrefix(prefix) }
             .compactMap { element -> (String, Int)? in
-                guard let number = Int(element.label.dropFirst(prefix.count)) else { return nil }
-                return (element.label, number)
+                guard let number = Int(element.identifier.dropFirst(prefix.count)) else { return nil }
+                return (element.identifier, number)
             }
             .min { $0.1 < $1.1 }?
             .0
@@ -403,7 +423,28 @@ final class QuranTabUITests: XCTestCase {
 
         row.tap()
         guard app.navigationBars[name].waitForExistence(timeout: 30) else { return false }
-        for _ in 0..<4 { app.swipeDown() }
-        return true
+        return scrollSurahToTop(in: app)
+    }
+
+    /// Brings an open surah back to its top, and says whether it got there.
+    ///
+    /// Waited for rather than swiped a fixed number of times, because a count of
+    /// swipes is a guess about how much of the surah fits on a screen — and that is
+    /// a property of the page, not of the reader. The mushaf reader sets 30-point
+    /// Arabic at a 2.0 line box, so about a verse to a screen where the old cards
+    /// fitted two or three; the same four swipes that reached the top of Al-Baqara
+    /// before now land several verses short and fail a test that has nothing to do
+    /// with swiping.
+    ///
+    /// The header is the signal: it is the only thing on the page that is on screen
+    /// at the very top and nowhere else.
+    private func scrollSurahToTop(in app: XCUIApplication) -> Bool {
+        let header = app.staticTexts
+            .matching(NSPredicate(format: "label MATCHES %@", "Surah [0-9]+ · [0-9]+ ayahs"))
+            .firstMatch
+        for _ in 0..<40 where !header.isHittable {
+            app.swipeDown()
+        }
+        return header.isHittable
     }
 }

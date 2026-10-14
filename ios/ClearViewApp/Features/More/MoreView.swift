@@ -21,8 +21,8 @@ struct MoreView: View {
                         MoreToolRow(title: "Dhikr Counter", detail: "Count your dhikr with ease", emoji: "📿")
                     }
                     sectionLabel("PROTECTION").padding(.top, 4)
-                    NavigationLink { ProtectionOverviewView() } label: {
-                        MoreToolRow(title: "Protection", detail: "Blocking, keywords, websites, DNS and app lock", symbol: "shield.fill", highlighted: true)
+                    NavigationLink { ProtectionView(model: ProtectionModel.shared) } label: {
+                        MoreToolRow(title: "Protection", detail: "Blocking, keywords, websites, filtering and app lock", symbol: "shield.fill", highlighted: true)
                     }
                 }.padding(16)
             }.background(Color.cvBackground).navigationTitle("")
@@ -98,29 +98,6 @@ private struct MoreToolRow: View {
             .background(highlighted ? Color.cvPrimaryContainer : Color.cvSurfaceContainerLow,
                         in: RoundedRectangle(cornerRadius: 16))
             .contentShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-private struct ProtectionOverviewView: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Label("Security & controls", systemImage: "shield.fill")
-                    .font(.title3.bold()).foregroundStyle(Color.cvPrimary)
-                Label("Not connected on iOS", systemImage: "info.circle").font(.headline)
-                Text("ClearView's Android protection service is not implemented on iOS. Opening this page does not enable blocking, DNS filtering, device locking, or monitoring of other apps.")
-                    .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
-                VStack(alignment: .leading, spacing: 16) {
-                    Label("Keyword and channel blocking", systemImage: "text.badge.xmark")
-                    Label("Website and DNS filtering", systemImage: "network")
-                    Label("App lock and device controls", systemImage: "lock")
-                }.font(.subheadline).padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 16))
-                Text("These controls need a dedicated iOS integration. They are listed here for parity, not presented as active features.")
-                    .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
-            }.padding(16)
-        }.background(Color.cvBackground).navigationTitle("Protection")
-            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
     }
 }
 
