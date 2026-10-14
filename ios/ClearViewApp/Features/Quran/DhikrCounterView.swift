@@ -3,8 +3,8 @@ import SwiftUI
 struct DhikrCounterView: View {
     @State private var model = DhikrCounterModel()
     @State private var showReset = false
-    @State private var showAdd = false
-    @State private var name = ""
+    @State private var showManagement = false
+    @State private var editing: DhikrItem?
 
     var body: some View {
         ScrollView {
@@ -15,6 +15,10 @@ struct DhikrCounterView: View {
                             CVChip(title: item.name, selected: item.id == model.selectedId) { model.select(id: item.id) }
                         }
                     }
+                }
+                if model.visibleItems.isEmpty {
+                    CVEmptyState(title: "No visible dhikr", message: "Manage your phrases to show a dhikr or add a new one.", symbol: "list.bullet")
+                    Button("Manage dhikr") { showManagement = true }.buttonStyle(.borderedProminent)
                 }
                 if let item = model.selected {
                     VStack(spacing: 12) {
@@ -50,6 +54,7 @@ struct DhikrCounterView: View {
                             ForEach([0, 33, 99, 100, 1000], id: \.self) { target in
                                 Button(target == 0 ? "Unlimited" : "\(target)") { model.setTarget(target, id: item.id) }
                             }
+                            Button("Custom target & edit") { editing = item }
                         }
                         Spacer()
                         Button { model.step(by: 1) } label: { Image(systemName: "arrow.right") }.accessibilityLabel("Next dhikr")
@@ -65,21 +70,22 @@ struct DhikrCounterView: View {
             .toolbar(.visible, for: .navigationBar)
             .toolbar {
                 Button { showReset = true } label: { Image(systemName: "arrow.counterclockwise") }.accessibilityLabel("Reset count")
-                Button { showAdd = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add dhikr")
+                Button { showManagement = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("Manage dhikr")
+                Button { editing = DhikrItem(id: "", name: "") } label: { Image(systemName: "plus") }.accessibilityLabel("Add dhikr")
             }
             .confirmationDialog("Reset this count?", isPresented: $showReset, titleVisibility: .visible) {
                 Button("Reset count", role: .destructive) { model.resetSelection() }
+                Button("Reset all counts", role: .destructive) { model.resetAllProgress() }
             }
-            .alert("Add a dhikr", isPresented: $showAdd) {
-                TextField("Name or phrase", text: $name)
-                Button("Add") {
-                    if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        let identifier = model.add(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+            .sheet(isPresented: $showManagement) { DhikrManagementView(model: model) }
+            .sheet(item: $editing) { item in
+                DhikrEditor(item: item) { updated in
+                    if updated.id.isEmpty {
+                        let identifier = model.add(name: updated.name, arabic: updated.arabic, translation: updated.translation, target: updated.target)
                         model.select(id: identifier)
-                        name = ""
-                    }
+                    } else { model.update(updated) }
                 }
-                Button("Cancel", role: .cancel) {}
             }
+            .onAppear { model.reload() }
     }
 }

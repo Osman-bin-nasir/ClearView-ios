@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct ClearViewApp: App {
+    @UIApplicationDelegateAdaptor(NotificationDelegate.self) private var notificationDelegate
 
     init() {
         Self.resetPreferencesIfAsked()
