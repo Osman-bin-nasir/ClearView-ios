@@ -28,7 +28,34 @@ final class TodoScreenModel {
     var dueToday: Int { TodoCodec.filter(items, filter: .today, today: today).count }
     var progress: Double { min(1, Double(completedToday) / Double(max(1, dailyTarget))) }
 
-    func refreshDay() { today = TodoCalendar.epochDay(of: Date()) }
+    func refreshDay() {
+        today = TodoCalendar.epochDay(of: Date())
+        items = store.items
+        Task { await TodoReminderScheduler.shared.refresh() }
+    }
+
+    func attempt(_ item: TodoItem) {
+        refreshDay()
+        guard !item.isDeleted, TodoCodec.isActiveOn(item, epochDay: today), item.completions[today] == nil else { return }
+        if TodoCodec.isAttemptedOn(item, epochDay: today) {
+            items = TodoCodec.unattempted(items, id: item.id, epochDay: today, at: TodoStoreClock.nowMillis())
+        } else {
+            items = TodoCodec.attempted(items, id: item.id, epochDay: today, at: TodoStoreClock.nowMillis())
+        }
+        store.saveItems(items)
+    }
+
+    func logTime(_ item: TodoItem, minutes: Int) {
+        refreshDay()
+        guard !item.isDeleted, TodoCodec.isActiveOn(item, epochDay: today), (1...1440).contains(minutes) else { return }
+        items = TodoCodec.timeAdded(items, id: item.id, epochDay: today, at: TodoStoreClock.nowMillis(), addedMinutes: minutes)
+        store.saveItems(items)
+    }
+
+    func deleteHistory(_ item: TodoItem) {
+        items = TodoCodec.removedWithHistory(items, id: item.id)
+        store.saveItems(items)
+    }
 
     func save(_ item: TodoItem) {
         items = items.contains { $0.id == item.id } ? TodoCodec.updated(items, item: item) : TodoCodec.added(items, item: item)
@@ -53,12 +80,16 @@ struct TodoView: View {
     @State private var editing: TodoItem?
     @State private var deleting: TodoItem?
     @State private var showSearch = false
+    @State private var logging: TodoItem?
+    @State private var loggedMinutes = 10
+    @State private var reminders = TodoReminderScheduler.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if showSearch { CVSearchField(text: $model.search, prompt: "Find a task") }
+                if let message = reminders.message { CVErrorBanner(message: message) }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
                         ForEach([TodoFilter.today, .upcoming, .completed], id: \.self) { filter in
@@ -108,7 +139,17 @@ struct TodoView: View {
             .confirmationDialog("Delete this task? Its history will be kept.", isPresented: Binding(
                 get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                 Button("Delete task", role: .destructive) { if let deleting { model.remove(deleting) }; deleting = nil }
+                Button("Delete task and its history", role: .destructive) { if let deleting { model.deleteHistory(deleting) }; deleting = nil }
             }
+            .sheet(item: $logging) { item in
+                NavigationStack {
+                    Form {
+                        Section(item.title) { Stepper("\(loggedMinutes) minutes", value: $loggedMinutes, in: 1...1440) }
+                        Button("Log time") { model.logTime(item, minutes: loggedMinutes); logging = nil }
+                    }.navigationTitle("Log time").toolbar { Button("Cancel") { logging = nil } }
+                }
+            }
+            .onAppear { model.refreshDay() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { model.refreshDay() } }
             .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in model.refreshDay() }
     }
@@ -150,10 +191,23 @@ struct TodoView: View {
                         if model.filter == .history {
                             Text("\(item.completions.count) completions recorded").font(.caption2).foregroundStyle(Color.cvPrimary)
                         }
+                        if item.behavior == .attempted && TodoCodec.isAttemptedOn(item, epochDay: model.today) {
+                            Label("Attempted today", systemImage: "circle.lefthalf.filled").font(.caption).foregroundStyle(Color.cvPrimary)
+                        }
+                        if item.behavior == .time {
+                            Text("\(TodoCodec.timeSpentOn(item, epochDay: model.today)) / \(item.targetDurationMinutes ?? 30) minutes today")
+                                .font(.caption).foregroundStyle(Color.cvPrimary)
+                        }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.buttonStyle(.plain)
                 Menu {
                     Button("Edit", systemImage: "pencil") { editing = item }
+                    if item.behavior == .attempted && !item.isDeleted {
+                        Button(TodoCodec.isAttemptedOn(item, epochDay: model.today) ? "Clear attempt" : "Mark attempted", systemImage: "circle.lefthalf.filled") { model.attempt(item) }
+                    }
+                    if item.behavior == .time && !item.isDeleted {
+                        Button("Log time", systemImage: "clock") { loggedMinutes = 10; logging = item }
+                    }
                     Button("Delete", systemImage: "trash", role: .destructive) { deleting = item }
                 } label: { Image(systemName: "ellipsis").frame(width: 30, height: 40) }
             }
@@ -222,10 +276,17 @@ struct TodoEditor: View {
     @State var item: TodoItem
     var onSave: (TodoItem) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var hasTime = false
-    @State private var time = Date()
+    @State private var initialized = false
     @State private var start = Date()
     @State private var end = Date()
+    @State private var timeMode = "none"
+    @State private var singleMinutes = 1200
+    @State private var rangeStart = 540
+    @State private var rangeEnd = 1020
+    @State private var reminderMode = "notification"
+    @State private var reminderTimes: [Int] = []
+    @State private var reminderCount = 3
+    @State private var repeats = true
 
     var body: some View {
         NavigationStack {
@@ -238,43 +299,137 @@ struct TodoEditor: View {
                         Text("Normal").tag(TodoPriority.normal)
                         Text("High").tag(TodoPriority.high)
                     }
+                    Picker("Behavior", selection: $item.behavior) {
+                        Text("Checkbox").tag(TodoBehavior.normal)
+                        Text("Attempted or complete").tag(TodoBehavior.attempted)
+                        Text("Time tracking").tag(TodoBehavior.time)
+                    }
+                    if item.behavior == .time {
+                        Stepper("Target: \(item.targetDurationMinutes ?? 30) minutes", value: Binding(get: { item.targetDurationMinutes ?? 30 }, set: { item.targetDurationMinutes = $0 }), in: 1...1440)
+                    }
                 }
                 Section("Schedule") {
                     Picker("Repeat", selection: $item.type) {
                         Text("Temporary").tag(TodoType.temporary)
-                        Text("Every day").tag(TodoType.permanent)
+                        Text("Repeating").tag(TodoType.permanent)
                     }
                     DatePicker("Starts", selection: $start, displayedComponents: .date)
-                    if item.type == .temporary { DatePicker("Ends", selection: $end, in: start..., displayedComponents: .date) }
-                    Toggle("Set a time", isOn: $hasTime)
-                    if hasTime { DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute) }
+                    if item.type == .temporary {
+                        DatePicker("Ends", selection: $end, in: start..., displayedComponents: .date)
+                    } else {
+                        ForEach(1...7, id: \.self) { weekday in
+                            Toggle(TodoCalendar.weekdayName(weekday), isOn: Binding(get: {
+                                item.scheduledDays?.contains(weekday) ?? true
+                            }, set: { enabled in
+                                var days = item.scheduledDays ?? Set(1...7)
+                                if enabled { days.insert(weekday) } else { days.remove(weekday) }
+                                item.scheduledDays = days
+                            }))
+                        }
+                    }
+                    Picker("Time", selection: $timeMode) {
+                        Text("No time").tag("none")
+                        Text("One time").tag("single")
+                        Text("Time range").tag("range")
+                    }
+                    if timeMode == "single" { minutePicker("At", minutes: $singleMinutes) }
+                    if timeMode == "range" {
+                        minutePicker("From", minutes: $rangeStart)
+                        minutePicker("Until", minutes: $rangeEnd)
+                        Toggle("Strict interval", isOn: $item.strictInterval)
+                        Text("Strict tasks can only be completed within this window. When the window ends, the missed day cannot be redone.").font(.footnote)
+                    }
+                }
+                if timeMode != "none" {
+                    Section("Reminders") {
+                        Picker("Style", selection: $reminderMode) {
+                            Text("Off").tag("off")
+                            Text("Notification").tag("notification")
+                            Text("Time-sensitive notification").tag("alarm")
+                        }
+                        if reminderMode != "off" {
+                            Toggle("Remind on every scheduled day", isOn: $repeats)
+                            if timeMode == "range" {
+                                Stepper("Spread \(reminderCount) reminders", value: $reminderCount, in: 2...6)
+                                Button("Spread across this interval") { spreadReminders() }
+                                ForEach(reminderTimes.indices, id: \.self) { index in
+                                    HStack {
+                                        minutePicker("Reminder \(index + 1)", minutes: Binding(get: { reminderTimes.indices.contains(index) ? reminderTimes[index] : rangeStart }, set: { if reminderTimes.indices.contains(index) { reminderTimes[index] = $0 } }))
+                                        Button(role: .destructive) { if reminderTimes.indices.contains(index) { reminderTimes.remove(at: index) } } label: { Image(systemName: "minus.circle") }
+                                    }
+                                }
+                                Button("Add reminder time") { reminderTimes.append(rangeStart) }.disabled(reminderTimes.count >= 6)
+                            }
+                            Text("iOS delivers a notification with the system sound, not Android's continuous alarm. Time-sensitive delivery depends on your notification settings. Open ClearView periodically to refresh the queued reminders.").font(.footnote)
+                        }
+                    }
                 }
             }.navigationTitle(item.title.isEmpty ? "New task" : "Edit task").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                            item.startDateEpochDay = TodoCalendar.epochDay(of: start)
-                            item.endDateEpochDay = item.type == .permanent ? nil : max(item.startDateEpochDay, TodoCalendar.epochDay(of: end))
-                            item.scheduledDays = nil
-                            item.timeMinutes = hasTime ? Calendar.current.component(.hour, from: time) * 60 + Calendar.current.component(.minute, from: time) : nil
-                            item.timeStartMinutes = nil
-                            item.timeEndMinutes = nil
-                            item.strictInterval = false
-                            onSave(item)
-                            dismiss()
-                        }.disabled(item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Save") { save(); dismiss() }.disabled(!valid)
                     }
                 }
-                .onAppear {
-                    start = Date(timeIntervalSince1970: Double(TodoCalendar.startOfDayMillis(epochDay: item.startDateEpochDay)) / 1000)
-                    end = Date(timeIntervalSince1970: Double(TodoCalendar.startOfDayMillis(epochDay: item.endDateEpochDay ?? item.startDateEpochDay)) / 1000)
-                    hasTime = item.timeMinutes != nil
-                    if let minutes = item.timeMinutes {
-                        time = Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
-                    }
-                }
+                .onAppear { initialize() }
         }.tint(.cvPrimary)
+    }
+
+    private var valid: Bool {
+        !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (item.type != .permanent || item.scheduledDays?.isEmpty != true)
+            && (timeMode != "range" || rangeEnd > rangeStart)
+    }
+
+    private func minutePicker(_ title: String, minutes: Binding<Int>) -> some View {
+        DatePicker(title, selection: Binding(get: {
+            Calendar.current.date(bySettingHour: minutes.wrappedValue / 60, minute: minutes.wrappedValue % 60, second: 0, of: Date()) ?? Date()
+        }, set: { date in
+            minutes.wrappedValue = Calendar.current.component(.hour, from: date) * 60 + Calendar.current.component(.minute, from: date)
+        }), displayedComponents: .hourAndMinute)
+    }
+
+    private func initialize() {
+        guard !initialized else { return }
+        initialized = true
+        start = Date(timeIntervalSince1970: Double(TodoCalendar.startOfDayMillis(epochDay: item.startDateEpochDay)) / 1000)
+        end = Date(timeIntervalSince1970: Double(TodoCalendar.startOfDayMillis(epochDay: item.endDateEpochDay ?? item.startDateEpochDay)) / 1000)
+        timeMode = item.timeStartMinutes != nil ? "range" : item.timeMinutes != nil ? "single" : "none"
+        singleMinutes = item.timeMinutes ?? 1200
+        rangeStart = item.timeStartMinutes ?? 540
+        rangeEnd = item.timeEndMinutes ?? 1020
+        reminderMode = item.reminder?.enabled == false ? "off" : item.reminder?.asAlarm == true ? "alarm" : "notification"
+        reminderTimes = item.reminder?.timesMinutes ?? []
+        repeats = item.reminder?.repeats ?? true
+    }
+
+    private func spreadReminders() {
+        guard rangeEnd > rangeStart else { return }
+        reminderTimes = (0..<reminderCount).map { rangeStart + (rangeEnd - rangeStart) * $0 / (reminderCount - 1) }
+    }
+
+    private func save() {
+        item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.startDateEpochDay = TodoCalendar.epochDay(of: start)
+        item.endDateEpochDay = item.type == .permanent ? nil : max(item.startDateEpochDay, TodoCalendar.epochDay(of: end))
+        if item.type == .temporary { item.scheduledDays = nil }
+        item.timeMinutes = timeMode == "single" ? singleMinutes : nil
+        item.timeStartMinutes = timeMode == "range" ? rangeStart : nil
+        item.timeEndMinutes = timeMode == "range" ? rangeEnd : nil
+        if timeMode != "range" { item.strictInterval = false }
+        if item.behavior == .time && item.targetDurationMinutes == nil { item.targetDurationMinutes = 30 }
+        if timeMode == "none" {
+            item.reminder = nil
+        } else {
+            if timeMode == "range" && reminderTimes.isEmpty { spreadReminders() }
+            let times = timeMode == "single" ? [singleMinutes] : reminderTimes.filter { (rangeStart...rangeEnd).contains($0) }
+            var reminder = item.reminder ?? ReminderConfig(timesMinutes: times, repeats: repeats)
+            reminder.timesMinutes = ReminderConfig.normalized(times: times.isEmpty ? [rangeStart] : times)
+            reminder.repeats = repeats
+            reminder.enabled = reminderMode != "off"
+            reminder.asAlarm = reminderMode == "alarm"
+            item.reminder = reminder
+        }
+        onSave(item)
     }
 }

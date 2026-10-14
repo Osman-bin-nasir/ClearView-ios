@@ -78,7 +78,13 @@ final class ProtectionModel {
     /// and two models over one store would let a screen keep showing content the other
     /// screen had just blocked. Views observe the model, so an edit redraws the surfaces
     /// that care.
-    static let shared = ProtectionModel()
+    static let shared: ProtectionModel = {
+        let model = ProtectionModel()
+        model.syncsDeviceControls = true
+        return model
+    }()
+    @ObservationIgnored private var syncsDeviceControls = false
+    @ObservationIgnored private var lastDeviceSignature: String?
 
     /// Whether the tab is showing its gate rather than the dashboard.
     var isLocked: Bool { !isUnlocked }
@@ -478,5 +484,13 @@ final class ProtectionModel {
         var updated = store
         change(&updated)
         store = updated
+        guard syncsDeviceControls else { return }
+        let signature = "\(updated.hasBeenEnabled)|\(updated.blockedDomains.joined(separator: "|"))"
+        guard signature != lastDeviceSignature else { return }
+        lastDeviceSignature = signature
+        DeviceControlsController.shared.syncProtection(enabled: updated.hasBeenEnabled, domains: updated.blockedDomains)
+        let enabled = updated.hasBeenEnabled
+        let domains = (updated.blockedDomains + ProtectionPresets.adultDomains).compactMap { ProtectionMatcher.normalizeDomain($0) }
+        Task { await SafariProtectionController.shared.sync(enabled: enabled, domains: domains) }
     }
 }

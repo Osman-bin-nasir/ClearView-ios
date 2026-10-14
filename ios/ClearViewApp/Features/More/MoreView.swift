@@ -5,6 +5,7 @@ struct MoreView: View {
     @State private var showAppearance = false
     @State private var showSettings = false
     @State private var showPhoneLimit = false
+    @State private var deviceControls = DeviceControlsController.shared
 
     var body: some View {
         NavigationStack {
@@ -15,7 +16,7 @@ struct MoreView: View {
                         MoreToolRow(title: "Todo", detail: "Plan, remember, and complete your tasks", symbol: "checkmark.circle")
                     }
                     Button { showPhoneLimit = true } label: {
-                        MoreToolRow(title: "Set Phone Limit", detail: "Countdown with a reminder when your time is up", symbol: "timer")
+                        MoreToolRow(title: "Set Phone Limit", detail: "Countdown, break reminder and optional app restrictions", symbol: "timer")
                     }
                     NavigationLink { DhikrCounterView() } label: {
                         MoreToolRow(title: "Dhikr Counter", detail: "Count your dhikr with ease", emoji: "📿")
@@ -26,6 +27,9 @@ struct MoreView: View {
                     }
                 }.padding(16)
             }.background(Color.cvBackground).navigationTitle("")
+                .onChange(of: deviceControls.expired) { _, expired in
+                    if expired { showPhoneLimit = false; showSettings = false }
+                }
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar(.visible, for: .navigationBar)
                 .toolbarBackground(Color.cvBackground, for: .navigationBar)
@@ -137,6 +141,11 @@ struct AppSettingsView: View {
                 }.settingsCard()
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Notifications").font(.headline)
+                    Toggle("Todo reminders", isOn: Binding(get: { TodoStore().notificationsEnabled }, set: { enabled in
+                        TodoStore().notificationsEnabled = enabled
+                        Task { await TodoReminderScheduler.shared.refresh() }
+                    }))
+                    if let message = TodoReminderScheduler.shared.message { CVErrorBanner(message: message) }
                     Toggle(isOn: Binding(get: { reminders.notificationsEnabled }, set: { enabled in
                         Task { await reminders.setNotifications(enabled: enabled, verse: QuranStore().currentVerse) }
                     })) {

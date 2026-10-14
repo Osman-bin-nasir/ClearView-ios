@@ -48,11 +48,21 @@ struct ProtectionView: View {
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Protection")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: DeviceControlsController.shared.expired) { _, expired in
+            if expired { sheet = nil; showsNewPassword = false }
+        }
         // The tab locks when the app leaves the screen, exactly as Android's does: the
         // password protects the dashboard from whoever picks the phone up next, which
         // only means anything if it re-locks.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.lock() }
+            if phase == .background {
+                model.lock()
+                sheet = nil
+                showsNewPassword = false
+                passwordEntry = ""
+                confirmation = ""
+                gateError = nil
+            }
         }
         .sheet(item: $sheet) { destination in
             ProtectionSheetView(sheet: destination, model: model)
@@ -69,6 +79,7 @@ struct ProtectionView: View {
             ProtectionHeader(model: model) { sheet = .notifications }
 
             ProtectionHeroCard(model: model, showCapabilities: $showCapabilities)
+            ProtectionDeviceStatusCard()
 
             ProtectionSectionHeading("YOUTUBE PROTECTION")
             if !model.protectionEnabled { ProtectionLockedHint() }
@@ -350,9 +361,9 @@ enum ProtectionCapabilities {
         "Always-on adult filter — explicit terms and known adult websites are hidden from everything ClearView shows you.",
         "Pattern blocking — innocent words like women, girl, hot or beach only match when combined with an adult term (\"women bikini\"), so everyday browsing is never blocked.",
         "YouTube Protection — your keywords and blocked channels apply to the videos and Shorts ClearView lists and plays.",
-        "Custom keywords & websites — everything under My blocked items is enforced here, and the same rules are ready for the Safari blocker.",
-        "100% on-device — nothing is read from another app, and nothing you block is sent anywhere.",
-        "Not on iOS: reading Chrome or the Google app, closing Incognito, and locking other apps. The Advanced section explains each.",
+        "Custom websites and known adult domains can also be blocked in Safari after you enable ClearView Website Protection in Safari Settings.",
+        "Matching is on-device. Shared blocklist suggestions you submit are sent to the server; optional family DNS sends domain queries to Cloudflare.",
+        "Screen Time can shield selected apps and websites with permission. Reading Chrome or the Google app, force-closing Incognito, and making ClearView undeletable are not available on iOS.",
     ]
 }
 
@@ -530,7 +541,7 @@ struct ProtectionBlockedItemsCard: View {
                 Text("\(model.userKeywords.count) keyword\(model.userKeywords.count == 1 ? "" : "s") · \(model.blockedDomains.count) website\(model.blockedDomains.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(Color.cvOnSurfaceVariant)
-                Text("These apply to everything ClearView shows you, and to the Safari blocker once it is added.")
+                Text("Keywords apply inside ClearView. Website rules also apply in Safari when you enable the extension.")
                     .font(.caption2)
                     .foregroundStyle(Color.cvOnSurfaceVariant)
             }
@@ -608,7 +619,7 @@ struct ProtectionWebFilterCard: View {
                     .background(Color.cvPrimary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Web filtering (Screen Time)").font(.subheadline.weight(.medium))
-                    Text("Network-level adult filtering is iOS's own setting, not ClearView's.")
+                    Text("Configure Screen Time filters and encrypted family DNS above.")
                         .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -621,9 +632,9 @@ struct ProtectionWebFilterCard: View {
             }
             if showDetails {
                 ProtectionDetailBlock(bullets: [
-                    "Android enforces DNS filtering itself through Device Owner policy. iOS reserves that control: only the person, in Settings, can turn web filtering on.",
+                    "Device protection can shield selected apps and websites after you grant Screen Time permission.",
                     "Settings → Screen Time → Content & Privacy Restrictions → Web Content → Limit Adult Websites filters Safari and apps that use the system browser.",
-                    "Open that screen from here with the button below, then come back — ClearView does not need to be told it is on.",
+                    "ClearView can install family DNS; you must enable its configuration in iOS Settings. Its status is shown on the DNS screen.",
                     "It works alongside everything in this tab, and it keeps working when ClearView is closed.",
                 ])
             }
@@ -663,7 +674,7 @@ struct ProtectionLimitsCard: View {
                     .background(Color.cvPrimary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("What iOS does not allow").font(.subheadline.weight(.medium))
-                    Text("Why this tab's reach stops at ClearView.")
+                    Text("Device controls need permission; some Android capabilities have no iOS equivalent.")
                         .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -687,9 +698,9 @@ enum ProtectionLimits {
     static let bullets: [String] = [
         "Reading Chrome or the Google app: Android does this with an Accessibility Service. iOS apps cannot read another app's screen at all.",
         "Closing Incognito automatically: that needs the same screen access, so it has no iOS equivalent.",
-        "Closing other apps or locking them: iOS apps cannot close or lock another app.",
+        "ClearView cannot force-quit other apps or lock the whole phone. With Screen Time permission it can shield the apps, categories and websites you select.",
         "Uninstall protection and device administration: iOS apps cannot make themselves undeletable. Screen Time's App Limits are the nearest thing, and the person controls them.",
-        "Blocking a site in Safari needs the Safari content-blocker extension. The rules it would compile are already here; the extension itself is a separate target that still has to be built and signed.",
+        "Screen Time domain filtering and family DNS require a correctly signed build and user approval. DNS blocks domains, not specific URLs or posts. The user can revoke these permissions.",
     ]
 }
 

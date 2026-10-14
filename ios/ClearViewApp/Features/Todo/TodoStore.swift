@@ -46,6 +46,9 @@ struct TodoStore {
     /// that would otherwise be lost, and nothing here prunes it.
     func saveItems(_ items: [TodoItem]) {
         defaults.set(TodoCodec.encode(items), forKey: Key.items)
+        if defaults === UserDefaults.standard {
+            Task { @MainActor in await TodoReminderScheduler.shared.refresh() }
+        }
     }
 
     /// The list sort last chosen. Stored as the enum's name, like Android, so an

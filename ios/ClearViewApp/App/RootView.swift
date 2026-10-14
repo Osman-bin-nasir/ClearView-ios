@@ -18,6 +18,9 @@ import SwiftUI
 /// knowing what they are.
 struct RootView: View {
     @State private var router = Router()
+    @State private var controls = DeviceControlsController.shared
+    @State private var showFocusGate = false
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = "dark"
 
     init() {
@@ -46,6 +49,29 @@ struct RootView: View {
         .environment(router)
         .preferredColorScheme(appearance == "system" ? nil : appearance == "light" ? .light : .dark)
         .onOpenURL { url in router.open(url) }
+        .fullScreenCover(isPresented: $showFocusGate) { FocusExpiredView() }
+        .task(id: controls.expired) {
+            if !controls.expired { showFocusGate = false; return }
+            try? await Task.sleep(for: .milliseconds(400))
+            if !Task.isCancelled && controls.expired { showFocusGate = true }
+        }
+        .task {
+            controls.refresh()
+            let protection = ProtectionModel.shared
+            controls.syncProtection(enabled: protection.protectionEnabled, domains: protection.store.blockedDomains)
+            await SafariProtectionController.shared.sync(enabled: protection.protectionEnabled, domains: protection.rules().domains)
+            await TodoReminderScheduler.shared.refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                controls.refreshExpiry()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                controls.refresh()
+                Task { await TodoReminderScheduler.shared.refresh() }
+            }
+        }
     }
 
     /// The bar's own colours, in Android's terms.
