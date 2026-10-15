@@ -1,4 +1,5 @@
 import Foundation
+import YouTubeKit
 
 /// Why an audio stream could not be resolved.
 ///
@@ -54,28 +55,8 @@ struct ExtractedAudio: Equatable, Sendable {
     let contentLength: Int64?
 }
 
-/// Resolves the direct audio-stream URL for a YouTube video.
-///
-/// Equivalent in purpose to Android's `OnDeviceStreamExtractor`, but not a port:
-/// Android leans on NewPipeExtractor, a JVM-only library that cannot compile for
-/// iOS. This asks YouTube's own innertube player endpoint directly instead.
-///
-/// ## Why the VR client
-///
-/// Innertube serves the same video differently per client. The web clients
-/// return formats whose URL is withheld behind a `signatureCipher`, which means
-/// fetching and evaluating YouTube's player JavaScript to unscramble it — a
-/// moving target that breaks the app whenever YouTube reshuffles that code. The
-/// `ANDROID_VR` client instead returns plain `url` fields on its audio formats,
-/// and needs no API key. Its responses were checked by hand against the live
-/// endpoint: audio formats carried `url`, carried no `signatureCipher`, and
-/// carried no `n` throttling parameter, and a ranged GET of the URL answered
-/// `206` with real `audio/mp4` bytes.
-///
-/// That check is also why this must run from the *device*. YouTube refuses
-/// innertube requests from datacenter addresses with `LOGIN_REQUIRED`; the
-/// phone's residential/mobile IP is trusted, which is exactly the property the
-/// Android implementation relies on.
+/// Native, on-device extraction through YouTubeKit, followed by direct player
+/// clients when needed. Both playback and downloads use this same resolver.
 struct YouTubeAudioExtractor: AudioStreamExtracting {
 
     /// The clients tried in order. All are keyless: a client that needs an API
@@ -114,18 +95,27 @@ struct YouTubeAudioExtractor: AudioStreamExtracting {
 
     private let session: URLSession
     private let clients: [InnertubeClient]
+    private let useNativeExtractor: Bool
 
-    init(session: URLSession = .shared, clients: [InnertubeClient] = YouTubeAudioExtractor.clients) {
+    init(session: URLSession = .shared, clients: [InnertubeClient] = YouTubeAudioExtractor.clients,
+         useNativeExtractor: Bool = true) {
         self.session = session
         self.clients = clients
+        self.useNativeExtractor = useNativeExtractor
     }
 
     func extractAudio(videoId: String) async throws -> ExtractedAudio {
         guard let id = Self.normalizedVideoId(videoId) else {
             throw AudioExtractionError.malformedResponse
         }
+        if useNativeExtractor {
+            do { return try await nativeAudio(videoId: id) }
+            catch is CancellationError { throw CancellationError() }
+            catch { MediaLog.audio.notice("Native extraction failed; trying direct player clients: \(error.localizedDescription, privacy: .public)") }
+        }
         var lastError: AudioExtractionError?
         for client in clients {
+            try Task.checkCancellation()
             do {
                 MediaLog.audio.debug("extract \(id, privacy: .public): trying client \(client.name, privacy: .public)/\(client.version, privacy: .public)")
                 let response = try await playerResponse(videoId: id, client: client)
@@ -151,6 +141,10 @@ struct YouTubeAudioExtractor: AudioStreamExtracting {
                     throw AudioExtractionError.liveBroadcast
                 }
                 let formats = (response.streamingData?.adaptiveFormats ?? []).compactMap { $0.audioFormat }
+                if !formats.isEmpty && formats.allSatisfy({ $0.url == nil }) {
+                    lastError = .cipheredStream
+                    continue
+                }
                 guard let best = Self.selectBestAudio(formats) else {
                     MediaLog.audio.error("extract \(id, privacy: .public): \(client.name, privacy: .public) offered no audio formats (advertised \(response.streamingData?.adaptiveFormats?.count ?? 0, privacy: .public))")
                     lastError = .noAudioStream
@@ -185,6 +179,20 @@ struct YouTubeAudioExtractor: AudioStreamExtracting {
         }
         MediaLog.audio.error("extract \(id, privacy: .public): every client failed; last reason = \((lastError ?? .noAudioStream).localizedDescription, privacy: .public)")
         throw lastError ?? .noAudioStream
+    }
+
+    /// Like Android's NewPipe integration, use a maintained on-device extractor
+    /// for signature and throttling transforms. Remote extraction is disabled.
+    private func nativeAudio(videoId: String) async throws -> ExtractedAudio {
+        let streams = try await YouTube(videoID: videoId, methods: [.local]).streams
+        let audio = streams.filterAudioOnly().filter {
+            $0.isNativelyPlayable && ($0.fileExtension == .m4a || $0.fileExtension == .mp4)
+        }
+        guard let best = audio.max(by: { ($0.averageBitrate ?? $0.bitrate ?? 0) < ($1.averageBitrate ?? $1.bitrate ?? 0) }) else {
+            throw AudioExtractionError.noAudioStream
+        }
+        return ExtractedAudio(url: best.url, fileExtension: "m4a", mimeType: "audio/mp4",
+                              bitrate: best.averageBitrate ?? best.bitrate ?? 0, contentLength: nil)
     }
 
     /// The parsed innertube player response, reduced to the fields this app reads.
@@ -229,21 +237,18 @@ struct YouTubeAudioExtractor: AudioStreamExtracting {
     ///    `audioIsDefault` win, then untagged streams (single-track videos,
     ///    where the only track is by definition the original), and only then
     ///    anything else.
-    /// 2. **A container AVFoundation can actually decode.** AAC in MP4
-    ///    (`audio/mp4; codecs="mp4a…"`) plays natively. Opus-in-WebM does not —
-    ///    `AVPlayer` has no WebM demuxer — so a saved `.webm` would download
-    ///    fine and then refuse to play. It is kept only as a last resort, for
-    ///    the videos that offer nothing else.
-    /// 3. **Then the highest bitrate.**
+    /// 2. Only direct AAC/MP4 streams that AVFoundation can decode are eligible.
+    ///    Protected URLs are handled by YouTubeKit; unsupported WebM is never
+    ///    recorded as a successful but unplayable download.
+    /// 3. Then the highest bitrate within the chosen language wins.
     static func selectBestAudio(_ formats: [InnertubeAudioFormat]) -> InnertubeAudioFormat? {
         guard !formats.isEmpty else { return nil }
-        let playable = formats.filter { $0.isPlayableOnIOS }
-        let candidates = playable.isEmpty ? formats : playable
-
-        let defaults = candidates.filter { $0.audioIsDefault == true }
-        let untagged = candidates.filter { !$0.hasAudioTrack }
-        let pool = !defaults.isEmpty ? defaults : (!untagged.isEmpty ? untagged : candidates)
-
+        let defaults = formats.filter { $0.audioIsDefault == true }
+        let untagged = formats.filter { !$0.hasAudioTrack }
+        let languagePool = !defaults.isEmpty ? defaults : (!untagged.isEmpty ? untagged : formats)
+        let pool = languagePool.filter {
+            $0.isPlayableOnIOS && $0.url.flatMap(URL.init(string:))?.scheme?.lowercased() == "https"
+        }
         return pool.max { first, second in first.bitrate < second.bitrate }
     }
 

@@ -16,7 +16,12 @@ final class AppFlowsUITests: XCTestCase {
         capture("Quran", app: app)
         for tab in ["Media", "Good Post", "More"] {
             app.tabBars.buttons[tab].tap()
-            XCTAssertTrue(app.navigationBars[tab].waitForExistence(timeout: 10))
+            if tab == "Good Post" {
+                XCTAssertTrue(app.staticTexts["Good Post"].waitForExistence(timeout: 10))
+                XCTAssertTrue(app.buttons["Good Post options"].exists)
+            } else {
+                XCTAssertTrue(app.navigationBars[tab].waitForExistence(timeout: 10))
+            }
             capture(tab, app: app)
         }
         XCTAssertTrue(app.staticTexts["Your daily tools"].exists)

@@ -19,6 +19,7 @@
     <array>
         <string>digitalkhatt_indopak.otf</string>
         <string>scheherazade_new.ttf</string>
+        <string>jetbrains_mono_variable.ttf</string>
     </array>
     <key>GoodPostBaseURL</key>
     <string>https://clearview-1neb.onrender.com</string>

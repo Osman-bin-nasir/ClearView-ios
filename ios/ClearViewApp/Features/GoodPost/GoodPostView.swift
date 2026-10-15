@@ -5,9 +5,16 @@ struct GoodPostView: View {
     @State private var model = GoodPostScreenModel()
     @State private var search = ""
     @State private var showSearch = false
+    @State private var showOptions = false
     @State private var showPublisher = false
+    @State private var destination: HomeDestination?
     @State private var linkedChannel: GoodPostChannel?
     @Environment(Router.self) private var router
+
+    private enum HomeDestination: String, Hashable, Identifiable {
+        case saved, starred, directory, sharedBlocklist, advertisements
+        var id: String { rawValue }
+    }
 
     private var channels: [GoodPostChannel] {
         model.homeChannels.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
@@ -15,123 +22,190 @@ struct GoodPostView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if showSearch {
-                        CVSearchField(text: $search, prompt: "Search your channels")
-                            .padding(.horizontal, 16).padding(.top, 12)
-                    }
-                    HStack {
-                        Text("Channels").font(.title2.bold())
-                        Spacer()
-                        NavigationLink { ChannelExploreView(model: model) } label: {
-                            Text("Explore").font(.subheadline.bold())
-                                .padding(.horizontal, 20).padding(.vertical, 12)
-                                .background(Color.cvSurfaceContainer, in: Capsule())
-                        }.buttonStyle(.plain)
-                    }.padding(.horizontal, 16).padding(.vertical, 24)
-                    if !model.channelAds.isEmpty {
-                        GoodPostAdCarousel(ads: model.channelAds).padding(.bottom, 16)
-                    }
-                    if let message = model.message {
-                        GoodPostNotice(message: message) { Task { await model.load() } }
-                    }
-                    if model.loading && channels.isEmpty {
-                        ProgressView().frame(maxWidth: .infinity).padding(32)
-                    }
-                    ForEach(channels) { channel in
-                        NavigationLink { ChannelFeedView(channel: channel, model: model) } label: {
-                            ChannelRow(channel: channel)
-                        }.buttonStyle(.plain)
-                    }
-                    if !model.loading && channels.isEmpty {
-                        CVEmptyState(title: search.isEmpty ? "Follow your favourite channels" : "No channels found",
-                            message: search.isEmpty ? "Explore channels to find voices you want to hear from." : "Try another channel name.",
-                            symbol: "megaphone").padding(24)
-                    }
-                    if model.canCreateChannel {
-                        Divider()
-                        Button { showPublisher = true } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "plus").foregroundStyle(Color.cvPrimary)
-                                    .frame(width: 28, height: 28)
-                                    .background(Color.cvSurfaceContainer, in: Circle())
-                                Text("Create a channel").font(.subheadline.bold())
-                            }.frame(maxWidth: .infinity).padding(.vertical, 20)
-                        }.buttonStyle(.plain)
-                    }
-                }.padding(.bottom, 24)
-            }.background(Color.cvBackground)
-                .navigationTitle("").navigationBarTitleDisplayMode(.inline)
-                .toolbar(.visible, for: .navigationBar)
-                .toolbarBackground(Color.cvBackground, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Text("Good Post").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            showSearch.toggle()
-                            if !showSearch { search = "" }
-                        } label: { Image(systemName: "magnifyingglass") }
-                            .accessibilityLabel("Search channels")
-                        Menu {
-                            if model.canCreateChannel {
-                                Button("Create a channel", systemImage: "plus") { showPublisher = true }
-                            }
-                            if model.ownedChannels.count == 1, let channel = model.ownedChannels.first {
-                                Button("My Channel", systemImage: "megaphone") { linkedChannel = channel }
-                            }
-                            NavigationLink { GoodPostSavedChannelsView(model: model) } label: {
-                                Label("Saved channels", systemImage: "bookmark")
-                            }
-                            NavigationLink {
-                                GoodPostStarredView(channelId: nil, repository: model.repository)
-                            } label: {
-                                Label("Starred messages", systemImage: "star")
-                            }
-                            NavigationLink {
-                                GoodPostDirectoryView(repository: model.repository)
-                            } label: {
-                                Label("Channel directory", systemImage: "list.bullet.rectangle")
-                            }
-                            Button("Publisher studio", systemImage: "square.and.pencil") { showPublisher = true }
-                            if model.session?.isSuperAdmin == true {
-                                NavigationLink {
-                                    GoodPostAdsView(repository: model.repository)
-                                } label: {
-                                    Label("Advertisements", systemImage: "rectangle.on.rectangle")
-                                }
-                            }
-                            if model.session?.isSuperAdmin == true {
-                                Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load() } }
-                            }
-                            if model.session != nil {
-                                Button(role: .destructive) {
-                                    Task { await model.signOut() }
-                                } label: { Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right") }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 24, height: 32)
-                        }.accessibilityLabel("Good Post options")
-                    }
-                }
-                .task { await model.load() }
-                .task(id: router.channelSlug) {
-                    if let slug = router.channelSlug {
-                        let result = await model.repository.channel(idOrSlug: slug)
-                        if let channel = result.value { linkedChannel = channel }
-                        else { model.message = result.userMessage }
-                        router.channelSlug = nil
+            VStack(spacing: 0) {
+                homeHeader
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if showSearch {
+                            CVSearchField(text: $search, prompt: "Search your channels")
+                                .padding(.horizontal, 16).padding(.top, 8)
+                        }
+                        HStack {
+                            Text("Channels").font(.system(size: 22, weight: .bold))
+                            Spacer()
+                            NavigationLink { ChannelExploreView(model: model) } label: {
+                                Text("Explore").font(.system(size: 14, weight: .semibold))
+                                    .padding(.horizontal, 20).padding(.vertical, 10)
+                                    .background(Color.cvSurfaceContainerHigh, in: Capsule())
+                            }.buttonStyle(.plain)
+                        }.padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 8)
+                        if !model.channelAds.isEmpty {
+                            GoodPostAdCarousel(ads: model.channelAds).padding(.bottom, 16)
+                        }
+                        if let message = model.message {
+                            GoodPostNotice(message: message) { Task { await model.load() } }
+                        }
+                        if model.loading && channels.isEmpty {
+                            ProgressView().frame(maxWidth: .infinity).padding(32)
+                        }
+                        ForEach(channels) { channel in
+                            NavigationLink { ChannelFeedView(channel: channel, model: model) } label: {
+                                ChannelRow(channel: channel)
+                            }.buttonStyle(.plain)
+                        }
+                        if !model.loading && channels.isEmpty {
+                            CVEmptyState(title: search.isEmpty ? "Follow your favourite channels" : "No channels found",
+                                message: search.isEmpty ? "Explore channels to find voices you want to hear from." : "Try another channel name.",
+                                symbol: "megaphone").padding(24)
+                        }
+                        if model.canCreateChannel {
+                            Divider().padding(.top, 8)
+                            Button { showPublisher = true } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "plus").foregroundStyle(GoodPostPalette.accent)
+                                        .frame(width: 28, height: 28)
+                                        .background(Color.cvSurfaceContainerHigh, in: Circle())
+                                    Text("Create a channel").font(.system(size: 15, weight: .semibold))
+                                }.frame(maxWidth: .infinity).padding(.vertical, 18)
+                            }.buttonStyle(.plain)
+                        }
                     }
                 }
                 .refreshable { await model.load() }
-                .sheet(isPresented: $showPublisher, onDismiss: { Task { await model.load() } }) {
-                    PublisherStudioView(repository: model.repository)
+            }
+            .background(Color.cvBackground)
+            .foregroundStyle(Color.cvOnSurface)
+            .toolbar(.hidden, for: .navigationBar)
+            .toolbar(.visible, for: .tabBar)
+            .accessibilityHidden(showOptions)
+            .overlay(alignment: .topTrailing) {
+                if showOptions {
+                    ZStack(alignment: .topTrailing) {
+                        Color.black.opacity(0.001).ignoresSafeArea()
+                            .onTapGesture { showOptions = false }
+                        ViewThatFits(in: .vertical) {
+                            homeOptions
+                            ScrollView { homeOptions }.frame(width: 224)
+                        }
+                        .padding(.top, 54).padding(.trailing, 8)
+                        .accessibilityAction(.escape) { showOptions = false }
+                    }
                 }
-                .navigationDestination(item: $linkedChannel) { ChannelFeedView(channel: $0, model: model) }
+            }
+            .task { await model.load() }
+            .task(id: router.channelSlug) {
+                if let slug = router.channelSlug {
+                    let result = await model.repository.channel(idOrSlug: slug)
+                    if let channel = result.value { linkedChannel = channel }
+                    else { model.message = result.userMessage }
+                    router.channelSlug = nil
+                }
+            }
+            .sheet(isPresented: $showPublisher, onDismiss: { Task { await model.load() } }) {
+                PublisherStudioView(repository: model.repository)
+            }
+            .navigationDestination(item: $linkedChannel) { ChannelFeedView(channel: $0, model: model) }
+            .navigationDestination(item: $destination) { destination in
+                Group {
+                    switch destination {
+                    case .saved: GoodPostSavedChannelsView(model: model)
+                    case .starred: GoodPostStarredView(channelId: nil, repository: model.repository)
+                    case .directory: GoodPostDirectoryView(repository: model.repository)
+                    case .advertisements: GoodPostAdsView(repository: model.repository)
+                    case .sharedBlocklist:
+                        ScrollView { ProtectionSharedListSheet(model: .shared).padding(16) }
+                            .background(Color.cvBackground)
+                            .navigationTitle("Shared blocklist")
+                            .task { await ProtectionModel.shared.syncGlobalRules() }
+                    }
+                }.toolbar(.visible, for: .navigationBar)
+            }
         }
+    }
+
+    private var homeHeader: some View {
+        HStack(spacing: 0) {
+            Text("Good Post").font(.system(size: 22, weight: .bold))
+                .accessibilityAddTraits(.isHeader).padding(.leading, 20)
+            Spacer(minLength: 8)
+            Button {
+                showSearch.toggle()
+                if !showSearch { search = "" }
+            } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 21))
+                    .frame(width: 48, height: 48)
+            }.accessibilityLabel("Search channels")
+            Button { showOptions.toggle() } label: {
+                GoodPostOverflowIcon().frame(width: 44, height: 44)
+                    .background(showOptions ? Color.cvSurfaceContainerHigh : .clear, in: Circle())
+            }.accessibilityLabel("Good Post options")
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 8).frame(minHeight: 60)
+        .background(Color.cvBackground)
+    }
+
+    private var homeOptions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if model.canCreateChannel {
+                option("Create a channel") { showPublisher = true }
+            }
+            if model.ownedChannels.count == 1, let channel = model.ownedChannels.first {
+                option("My Channel") { linkedChannel = channel }
+            }
+            if model.session?.isSuperAdmin == true {
+                option("Advertisements") { destination = .advertisements }
+            }
+            option("Shared blocklist") { destination = .sharedBlocklist }
+            option("Channel directory") { destination = .directory }
+            option("Refresh") { Task { await model.load() } }
+            Menu {
+                Button("Saved channels", systemImage: "bookmark") { open(.saved) }
+                Button("Starred messages", systemImage: "star") { open(.starred) }
+                Button("Publisher studio", systemImage: "square.and.pencil") {
+                    showOptions = false
+                    showPublisher = true
+                }
+            } label: {
+                Text("More options").frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .padding(.horizontal, 16)
+            }
+            if model.session != nil {
+                option("Sign out", destructive: true) { Task { await model.signOut() } }
+            }
+        }
+        .font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(Color.cvOnSurface)
+        .buttonStyle(.plain)
+        .padding(.vertical, 8).frame(width: 224)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(GoodPostPalette.menu, in: RoundedRectangle(cornerRadius: 4))
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+    }
+
+    private func option(_ title: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(role: destructive ? .destructive : nil) {
+            showOptions = false
+            action()
+        } label: {
+            Text(title).foregroundStyle(destructive ? Color.cvError : Color.cvOnSurface)
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private func open(_ target: HomeDestination) {
+        showOptions = false
+        destination = target
+    }
+}
+
+/// Three vertical dots, without the platform navigation bar's button capsule.
+private struct GoodPostOverflowIcon: View {
+    var body: some View {
+        VStack(spacing: 3) {
+            ForEach(0..<3) { _ in Circle().frame(width: 3, height: 3) }
+        }.frame(width: 24, height: 24)
     }
 }
 
@@ -176,20 +250,23 @@ struct ChannelRow: View {
                             Image(systemName: symbol).font(.caption)
                         }
                         Text(preview).lineLimit(1)
-                    }.font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                    }.font(channel.lastPostPreview?.trimmed.isEmpty == false
+                        ? .custom("JetBrainsMono-Regular", size: 14, relativeTo: .subheadline)
+                        : .system(size: 14))
+                        .foregroundStyle(Color.cvOnSurfaceVariant)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .trailing, spacing: 8) {
                     if let timestamp {
                         Text(timestamp).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                     }
-                    if channel.unreadCount > 0 {
+                    if channel.following && channel.unreadCount > 0 {
                         Text(channel.unreadCount > 99 ? "99+" : "\(channel.unreadCount)")
                             .font(.caption2.bold()).foregroundStyle(Color.cvOnPrimary)
                             .padding(.horizontal, 7).padding(.vertical, 4)
-                            .background(Color.cvPrimary, in: Capsule())
+                            .background(GoodPostPalette.accent, in: Capsule())
                     }
                 }
-            }.padding(.horizontal, 16).padding(.vertical, 14)
+            }.padding(.horizontal, 16).padding(.vertical, 12)
             Divider().padding(.leading, 79)
         }.contentShape(Rectangle())
     }
@@ -243,7 +320,7 @@ struct ChannelExploreView: View {
                         GoodPostDiscoverRow(channel: channel, model: model)
                     }
                 }
-            }.padding(.bottom, 32)
+            }
         }.background(Color.cvBackground)
             .navigationTitle("Channels").navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
@@ -268,6 +345,8 @@ struct ChannelFeedView: View {
     @State private var feed: ChannelFeedModel
     @State private var browser: BrowserDestination?
     @State private var search = ""
+    @State private var showSearch = false
+    @Environment(\.dismiss) private var dismiss
     @State private var composing = false
     /// The line the compose strip is holding, handed to the posting page so the pencil does not
     /// throw away what has already been typed.
@@ -289,10 +368,104 @@ struct ChannelFeedView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            channelHeader
+            if showSearch {
+                CVSearchField(text: $search, prompt: "Search loaded posts")
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.cvBackground)
+            }
+            // A connection notice stays below the header while the updates scroll.
+            if let message = feed.message ?? model.message {
+                GoodPostNotice(message: message) {
+                    Task {
+                        await model.load()
+                        await feed.load()
+                    }
+                }
+            }
+            postsScrollView
+        }
+        .background(Color.cvBackground)
+        .foregroundStyle(Color.cvOnSurface)
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        // The inset owns the composer's height. There is no second spacer or
+        // reserved tab-bar area beneath it, including when the keyboard opens.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.canManage(channel.id) {
+                ChannelComposeBar(channelName: channel.name, draft: $draft) { composing = true }
+            }
+        }
+        .sheet(isPresented: $composing, onDismiss: { Task { await feed.load() } }) {
+            PostComposerView(
+                channel: channel,
+                repository: model.repository,
+                initialText: draft,
+                onPublished: { draft = "" }
+            )
+        }
+        .task {
+            await feed.load()
+            await loadStarred()
+        }
+        .sheet(item: $browser) { BrowserSheet(url: $0.url) }
+    }
+
+    private var channelHeader: some View {
+        HStack(spacing: 0) {
+            Button { dismiss() } label: {
+                Image(systemName: "arrow.left").font(.system(size: 21))
+                    .frame(width: 48, height: 48)
+            }.accessibilityLabel("Back")
+            NavigationLink {
+                ChannelInfoView(channel: channel, model: model) { updated in channel = updated }
+                    .toolbar(.visible, for: .navigationBar)
+            } label: {
+                HStack(spacing: 12) {
+                    CVAvatar(name: channel.name, url: channel.iconUrl, size: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(channel.name).font(.system(size: 17, weight: .bold)).lineLimit(1)
+                        Text("Public channel").font(.system(size: 12))
+                            .foregroundStyle(Color.cvOnSurfaceVariant)
+                    }
+                    Spacer(minLength: 4)
+                }
+            }.accessibilityLabel("Channel info for \(channel.name)")
+            ShareLink(item: channel.shareLink) {
+                Image(systemName: "link").font(.system(size: 21)).frame(width: 44, height: 48)
+            }.accessibilityLabel("Share channel link")
+            Menu {
+                NavigationLink {
+                    ChannelInfoView(channel: channel, model: model) { updated in channel = updated }
+                        .toolbar(.visible, for: .navigationBar)
+                } label: { Label("Channel info", systemImage: "info.circle") }
+                Button("Search posts", systemImage: "magnifyingglass") {
+                    showSearch.toggle()
+                    if !showSearch { search = "" }
+                }
+                NavigationLink {
+                    GoodPostSavedChannelsView(model: model).toolbar(.visible, for: .navigationBar)
+                } label: { Label("Saved channels", systemImage: "bookmark") }
+                Button(model.followedIDs.contains(channel.id) ? "Unfollow channel" : "Follow channel") {
+                    Task { await model.toggleFollow(channel) }
+                }.disabled(model.pendingFollows.contains(channel.id))
+                Button(model.savedIDs.contains(channel.id) ? "Unsave channel" : "Save channel") {
+                    model.toggleSaved(channel)
+                }
+                ShareLink(item: channel.shareLink) { Label("Share", systemImage: "square.and.arrow.up") }
+            } label: {
+                GoodPostOverflowIcon().frame(width: 44, height: 48)
+            }.accessibilityLabel("Channel options")
+        }
+        .buttonStyle(.plain).tint(Color.cvOnSurface)
+        .padding(.trailing, 4).frame(minHeight: 60)
+        .background(Color.cvBackground)
+    }
+
+    private var postsScrollView: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                if let message = model.message { GoodPostNotice(message: message) { Task { await model.load() } } }
-                if let message = feed.message { GoodPostNotice(message: message) { Task { await feed.load() } } }
                 if feed.nextCursor != nil {
                     Button("Earlier posts") { Task { await feed.load(more: true) } }
                         .font(.subheadline.bold()).padding(12).background(Color.cvSurfaceContainer, in: Capsule())
@@ -301,10 +474,11 @@ struct ChannelFeedView: View {
                 if feed.loading && feed.posts.isEmpty { ProgressView().frame(maxWidth: .infinity).padding() }
                 ForEach(Array(visiblePosts.enumerated()), id: \.element.id) { index, post in
                     if index == 0 || postDay(post) != postDay(visiblePosts[index - 1]) {
-                        Text(dayLabel(post)).font(.caption.weight(.semibold))
-                            .padding(.horizontal, 14).padding(.vertical, 9)
+                        Text(dayLabel(post)).font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.cvOnSurfaceVariant)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
                             .background(Color.cvSurfaceContainerHigh, in: RoundedRectangle(cornerRadius: 8))
-                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
                     }
                     postCard(post).padding(.horizontal, 10)
                 }
@@ -315,79 +489,17 @@ struct ChannelFeedView: View {
                         symbol: "text.bubble"
                     )
                 }
-            }.padding(.vertical, 12)
-        }.defaultScrollAnchor(.bottom)
-            .background {
-                GeometryReader { geometry in
-                    Image("GoodPostChatBackground").resizable().scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                }.allowsHitTesting(false).accessibilityHidden(true)
-            }
-            .navigationTitle("").navigationBarTitleDisplayMode(.inline)
-            .toolbar(.visible, for: .navigationBar)
-            .toolbarBackground(Color.cvBackground, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .searchable(text: $search, prompt: "Search loaded posts")
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    NavigationLink {
-                        ChannelInfoView(channel: channel, model: model) { updated in channel = updated }
-                    } label: {
-                        HStack(spacing: 10) {
-                            CVAvatar(name: channel.name, url: channel.iconUrl, size: 36)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(channel.name).font(.headline).lineLimit(1)
-                                Text("Public channel").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-                            }
-                        }
-                    }.buttonStyle(.plain).accessibilityLabel("Channel info for \(channel.name)")
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    ShareLink(item: channel.shareLink) { Image(systemName: "link") }
-                    Menu {
-                        NavigationLink { ChannelInfoView(channel: channel, model: model) { updated in channel = updated } } label: {
-                            Label("Channel info", systemImage: "info.circle")
-                        }
-                        NavigationLink { GoodPostSavedChannelsView(model: model) } label: {
-                            Label("Saved channels", systemImage: "bookmark")
-                        }
-                        Button(model.followedIDs.contains(channel.id) ? "Unfollow channel" : "Follow channel") {
-                            Task { await model.toggleFollow(channel) }
-                        }.disabled(model.pendingFollows.contains(channel.id))
-                        Button(model.savedIDs.contains(channel.id) ? "Unsave channel" : "Save channel") {
-                            model.toggleSaved(channel)
-                        }
-                        ShareLink(item: channel.shareLink) { Label("Share", systemImage: "square.and.arrow.up") }
-                    } label: {
-                        Image(systemName: "ellipsis").rotationEffect(.degrees(90))
-                    }.accessibilityLabel("Channel options")
-                }
-            }
-            // The composer's way in, for an account that may post to THIS channel.
-            // A safe-area inset rather than an overlay so the feed scrolls under it
-            // and its last post stays reachable — the same reason Android gives the
-            // list a bottom content padding when it is editable.
-            .safeAreaInset(edge: .bottom) {
-                if model.canManage(channel.id) {
-                    ChannelComposeBar(channelName: channel.name, draft: $draft) { composing = true }
-                }
-            }
-            .sheet(isPresented: $composing, onDismiss: { Task { await feed.load() } }) {
-                PostComposerView(
-                    channel: channel,
-                    repository: model.repository,
-                    initialText: draft,
-                    // The draft belongs to the strip, so a posted line clears it — and a
-                    // cancelled one does not, because the reader did not send it.
-                    onPublished: { draft = "" }
-                )
-            }
-            .task {
-                await feed.load()
-                await loadStarred()
-            }
-            .refreshable { await feed.load() }
-            .sheet(item: $browser) { BrowserSheet(url: $0.url) }
+            }.padding(.top, 6)
+        }
+        .defaultScrollAnchor(.bottom)
+        .scrollDismissesKeyboard(.interactively)
+        .background {
+            GeometryReader { geometry in
+                Image("GoodPostChatBackground").resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+            }.allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .refreshable { await feed.load() }
     }
 
     private func loadStarred() async {
@@ -419,65 +531,78 @@ struct ChannelFeedView: View {
 
     private func timeLabel(_ post: GoodPostPost) -> String {
         guard let milliseconds = parseIsoMillis(post.createdAt) else { return "" }
-        return Date(timeIntervalSince1970: Double(milliseconds) / 1000).formatted(date: .omitted, time: .shortened)
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000).formatted(.dateTime.hour(.defaultDigits(amPM: .abbreviated)).minute()).lowercased()
     }
 
     private func postCard(_ post: GoodPostPost) -> some View {
-            VStack(alignment: .leading, spacing: 12) {
-                if let body = post.body, !body.isEmpty { Text(body).font(.body).lineSpacing(5).textSelection(.enabled) }
-                ForEach(post.media) { media in
-                    if let raw = media.url, let url = URL(string: raw) {
-                        if media.isImage {
-                            Button { browser = BrowserDestination(raw) } label: {
-                                AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().frame(height: 160) }
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }.buttonStyle(.plain).accessibilityLabel("Open image")
-                        } else if media.isVideo {
-                            InlinePostVideo(url: url)
-                        } else {
-                            Button { browser = BrowserDestination(raw) } label: { Label(media.fileName ?? "Open attachment", systemImage: "doc") }
+        VStack(alignment: .leading, spacing: 6) {
+            if let body = post.body, !body.isEmpty {
+                Text(body).font(.custom("JetBrainsMono-Regular", size: 14, relativeTo: .body))
+                    .lineSpacing(4)
+            }
+            ForEach(post.media) { media in
+                if let raw = media.url, let url = URL(string: raw) {
+                    if media.isImage {
+                        Button { browser = BrowserDestination(raw) } label: {
+                            AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().frame(height: 160) }
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }.buttonStyle(.plain).accessibilityLabel("Open image")
+                    } else if media.isVideo {
+                        InlinePostVideo(url: url)
+                    } else {
+                        Button { browser = BrowserDestination(raw) } label: { Label(media.fileName ?? "Open attachment", systemImage: "doc") }
+                    }
+                }
+            }
+            if let link = post.linkUrl {
+                Button { browser = BrowserDestination(link) } label: {
+                    Label(post.linkTitle ?? link, systemImage: "arrow.up.right.square").font(.subheadline).lineLimit(2)
+                }
+            }
+            if !post.reactions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(post.reactions, id: \.emoji) { reaction in
+                            Button { Task { await feed.react(to: post, emoji: reaction.emoji) } } label: {
+                                Text("\(reaction.emoji) \(reaction.count)").font(.caption)
+                                    .padding(5)
+                                    .background(feed.myReactions[post.id] == reaction.emoji ? Color.cvPrimaryContainer : .clear, in: Capsule())
+                            }.disabled(feed.reacting.contains(post.id))
                         }
                     }
                 }
-                if let link = post.linkUrl {
-                    Button { browser = BrowserDestination(link) } label: {
-                        Label(post.linkTitle ?? link, systemImage: "arrow.up.right.square").font(.subheadline).lineLimit(2)
-                    }
-                }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                    ForEach(post.reactions, id: \.emoji) { reaction in
-                        Button { Task { await feed.react(to: post, emoji: reaction.emoji) } } label: {
-                            Text("\(reaction.emoji) \(reaction.count)").font(.caption)
-                                .padding(5).background(feed.myReactions[post.id] == reaction.emoji ? Color.cvPrimaryContainer : .clear, in: Capsule())
-                        }.disabled(feed.reacting.contains(post.id))
-                    }
-                    if !feed.emojiOptions.isEmpty {
-                        Menu {
-                            ForEach(feed.emojiOptions, id: \.self) { emoji in Button(emoji) { Task { await feed.react(to: post, emoji: emoji) } } }
-                        } label: { Image(systemName: "face.smiling").font(.caption) }.disabled(feed.reacting.contains(post.id))
-                    }
-                    }
-                }
-                HStack(spacing: 12) {
-                    Spacer(minLength: 0)
-                    // A bookmark is private to this device, so it costs no request and writes
-                    // nothing for anybody else.
-                    Button { toggleStar(post) } label: {
-                        Image(systemName: starredIDs.contains(post.id) ? "star.fill" : "star")
-                            .font(.caption)
-                            .foregroundStyle(starredIDs.contains(post.id) ? Color.white : GoodPostFeedPalette.timestamp)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(starredIDs.contains(post.id) ? "Remove star" : "Star this message")
-                    Label("\(post.views)", systemImage: "eye").font(.caption2)
-                    Text(timeLabel(post)).font(.caption2)
-                    ShareLink(item: post.body ?? post.linkUrl ?? channel.shareLink) { Image(systemName: "square.and.arrow.up").font(.caption) }
-                }.foregroundStyle(GoodPostFeedPalette.timestamp)
             }
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(Color.white).tint(.white)
-            .background(GoodPostFeedPalette.bubble, in: RoundedRectangle(cornerRadius: 16))
+            HStack(spacing: 6) {
+                if starredIDs.contains(post.id) {
+                    Image(systemName: "star.fill").font(.system(size: 11))
+                        .accessibilityLabel("Starred message")
+                }
+                Spacer(minLength: 0)
+                if post.views > 0 {
+                    Label("\(post.views)", systemImage: "eye").font(.system(size: 11))
+                }
+                Text(timeLabel(post)).font(.system(size: 11.5))
+            }.foregroundStyle(GoodPostPalette.timestamp)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(Color.white).tint(.white)
+        .background(GoodPostPalette.bubble, in: RoundedRectangle(cornerRadius: 12))
+        .contextMenu {
+            if let body = post.body, !body.isEmpty {
+                Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = body }
+            }
+            Button(starredIDs.contains(post.id) ? "Remove star" : "Star this message", systemImage: "star") {
+                toggleStar(post)
+            }
+            ShareLink(item: post.body ?? post.linkUrl ?? channel.shareLink) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            ForEach(feed.emojiOptions, id: \.self) { emoji in
+                Button(emoji) { Task { await feed.react(to: post, emoji: emoji) } }
+                    .disabled(feed.reacting.contains(post.id))
+            }
+        }
     }
 }
 
@@ -504,27 +629,40 @@ struct ChannelComposeBar: View {
         HStack(spacing: 10) {
             HStack(spacing: 12) {
                 TextField("Write an update", text: $draft, axis: .vertical)
-                .lineLimit(1...4)
-                .textFieldStyle(.plain)
-                .submitLabel(.return)
-                .accessibilityIdentifier("goodpost.channel.compose")
+                    .font(.custom("JetBrainsMono-Regular", size: 16, relativeTo: .body))
+                    .lineLimit(1...4)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.return)
+                    .accessibilityIdentifier("goodpost.channel.compose")
                 Button(action: onExpand) { Image(systemName: "paperclip").font(.title3) }
                     .buttonStyle(.plain).accessibilityLabel("Attach media to an update")
-            }.padding(.horizontal, 16).padding(.vertical, 13)
-                .background(Color.cvSurfaceContainerHigh, in: RoundedRectangle(cornerRadius: 26))
+            }.padding(.horizontal, 16).padding(.vertical, 12)
+                .frame(minHeight: 48)
+                .background(GoodPostPalette.bar, in: RoundedRectangle(cornerRadius: 26))
             Button(action: onExpand) {
                 Image(systemName: "pencil").font(.title3.bold()).foregroundStyle(Color.cvOnPrimary)
-                    .frame(width: 48, height: 48).background(Color.cvPrimary, in: Circle())
+                    .frame(width: 48, height: 48).background(GoodPostPalette.accent, in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open the posting page for \(channelName)")
         }
-        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 6)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .foregroundStyle(Color.cvOnSurfaceVariant)
         .background(Color.cvBackground)
     }
 }
 
-private enum GoodPostFeedPalette {
+enum GoodPostPalette {
+    // The supplied Android reference uses this brighter teal for its controls.
+    static let accent = Color(UIColor { traits in
+        UIColor(cvRGB: traits.userInterfaceStyle == .dark ? 0x00CFCD : 0x00695C)
+    })
+    static let menu = Color(UIColor { traits in
+        UIColor(cvRGB: traits.userInterfaceStyle == .dark ? 0x1C2322 : 0xEEF3F1)
+    })
+    static let bar = Color(UIColor { traits in
+        UIColor(cvRGB: traits.userInterfaceStyle == .dark ? 0x252B2B : 0xE0E9E6)
+    })
     static let bubble = Color(red: 51 / 255.0, green: 75 / 255.0, blue: 25 / 255.0)
     static let timestamp = Color(red: 164 / 255.0, green: 184 / 255.0, blue: 152 / 255.0)
 }

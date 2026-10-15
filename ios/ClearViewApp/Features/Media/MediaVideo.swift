@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where a media item came from.
-enum MediaPlatform: String, CaseIterable, Codable {
+enum MediaPlatform: String, CaseIterable, Codable, Sendable {
     case youTube = "YOUTUBE"
     case instagram = "INSTAGRAM"
     case x = "X"
@@ -21,7 +21,7 @@ enum MediaPlatform: String, CaseIterable, Codable {
 /// flag, because the caller has to tell a Reel from a *post that contains a video
 /// clip*: an image carousel with one video slide is still a post, and treating it as
 /// a Reel is what put photos in the Reels row.
-enum InstagramMediaType: String, CaseIterable, Codable {
+enum InstagramMediaType: String, CaseIterable, Codable, Sendable {
     case reel = "REEL"
     case image = "IMAGE"
     case video = "VIDEO"
@@ -33,7 +33,7 @@ enum InstagramMediaType: String, CaseIterable, Codable {
 ///
 /// The Swift shape of the Android `MediaVideo`, field for field, because the parsers,
 /// the filters and the cache JSON all have to agree with it.
-struct MediaVideo: Identifiable, Equatable {
+struct MediaVideo: Identifiable, Equatable, Sendable {
 
     let videoId: String
     let title: String
@@ -125,7 +125,7 @@ struct MediaVideo: Identifiable, Equatable {
     }
 
     /// True for an Instagram item that carries moving pictures — a Reel or a video
-    /// post. These play in the native player exactly like a YouTube video; only
+    /// post. These play in the native player; only
     /// image/carousel posts render as stills.
     ///
     /// The **type** decides, and it decides both ways: a post that merely *contains* a
@@ -137,7 +137,7 @@ struct MediaVideo: Identifiable, Equatable {
         switch instagramType {
         case .reel, .video: return true
         case .image, .carousel: return false
-        case nil: return mediaUrl?.contains(".mp4") == true
+        case nil: return isShort || mediaUrl?.lowercased().contains(".mp4") == true
         }
     }
 
@@ -163,12 +163,15 @@ struct MediaVideo: Identifiable, Equatable {
         return false
     }
 
-    /// True when this item belongs in the Shorts row and viewer.
-    ///
-    /// Shorts are a YouTube concept: an Instagram Reel is an ordinary video here (it
-    /// gets resume and Continue Watching like any long video). Older caches stored
-    /// `isShort = true` for Reels, hence the platform guard.
-    var isShortsEntry: Bool { isShort && !isInstagram }
+    /// Instagram Reels and YouTube Shorts share the Shorts surface. A carousel
+    /// containing a clip remains a post, and an explicitly long video stays a video.
+    var isShortsEntry: Bool {
+        if isInstagram {
+            if let instagramType { return instagramType == .reel }
+            return isShort && !isPost
+        }
+        return isShort && !isPost
+    }
 
     /// The `#shorts` hashtag signal, from a title alone.
     ///

@@ -11,6 +11,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXBuildFile section */
+        DD0000000000000000000001 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000003 /* YouTubeKit */; };
 		CC000000000000000000000E = {isa = PBXBuildFile; fileRef = CC0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BB000000000000000000000E = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -71,6 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                DD0000000000000000000001 /* YouTubeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +145,7 @@
 				BB0000000000000000000004 /* DeviceControlsShared */,
 				CC0000000000000000000004 /* SafariControlsShared */,
 			);
+            packageProductDependencies = (DD0000000000000000000003 /* YouTubeKit */, );
 			name = ClearView;
 			productName = ClearView;
 			productReference = AA0000000000000000000006 /* ClearView.app */;
@@ -224,6 +227,7 @@
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
+            packageReferences = (DD0000000000000000000002 /* YouTubeKit */, );
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -324,6 +328,21 @@
 			targetProxy = AA000000000000000000003A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+        DD0000000000000000000002 /* YouTubeKit */ = {
+            isa = XCRemoteSwiftPackageReference;
+            repositoryURL = "https://github.com/alexeichhorn/YouTubeKit.git";
+            requirement = { kind = exactVersion; version = 0.4.9; };
+        };
+/* End XCRemoteSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        DD0000000000000000000003 /* YouTubeKit */ = {
+            isa = XCSwiftPackageProductDependency;
+            package = DD0000000000000000000002 /* YouTubeKit */;
+            productName = YouTubeKit;
+        };
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		CC0000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Safari.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RVDV9C73X4; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "Safari-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.safari; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };

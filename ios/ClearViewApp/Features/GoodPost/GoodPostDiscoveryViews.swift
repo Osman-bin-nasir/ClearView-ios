@@ -32,7 +32,7 @@ struct GoodPostChannelName: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(channel.name).font(.headline).lineLimit(lineLimit)
+            Text(channel.name).font(.system(size: 17, weight: .bold)).lineLimit(lineLimit)
             if channel.verified {
                 Image(systemName: "checkmark.seal.fill").font(.subheadline)
                     .foregroundStyle(Color.cvPrimary).accessibilityLabel("Verified channel")
@@ -47,10 +47,12 @@ struct GoodPostNotice: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Text(message).font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+            Text(message).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.cvOnSurfaceVariant)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Retry", action: retry).font(.subheadline.bold()).foregroundStyle(Color.cvPrimary)
-        }.padding(16).background(Color.cvSurfaceContainer)
+            Button("Retry", action: retry).font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(GoodPostPalette.accent).frame(minWidth: 48, minHeight: 44)
+        }.padding(.leading, 16).padding(.trailing, 4).padding(.vertical, 4)
+            .background(GoodPostPalette.bar)
     }
 }
 

@@ -64,11 +64,14 @@ struct LibraryVideo: Codable, Identifiable, Hashable {
     }
 
     /// True when this item came from YouTube.
-    var isYouTube: Bool { (platform ?? MediaPlatform.youTube.rawValue).uppercased() == MediaPlatform.youTube.rawValue }
+    var isYouTube: Bool { mediaVideo.platform == .youTube }
+    var isShortsEntry: Bool { mediaVideo.isShortsEntry }
+    var isPost: Bool { mediaVideo.isPost }
 
     var mediaVideo: MediaVideo {
         let host = URL(string: url)?.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? ""
-        let resolved: MediaPlatform = platform.flatMap(MediaPlatform.init(rawValue:))
+        let resolved: MediaPlatform = platform.flatMap { MediaPlatform(rawValue: $0.uppercased()) }
+            ?? (id.hasPrefix("ig_") ? .instagram : id.hasPrefix("x_") ? .x : nil)
             ?? (host == "instagram.com" ? .instagram : host == "x.com" || host == "twitter.com" ? .x : .youTube)
         return MediaVideo(videoId: id, title: title, channelId: channelID ?? "", channelName: channel,
             publishedAtEpochMillis: publishedAt, thumbnailUrl: thumbnail ?? "", viewCount: viewCount ?? 0,
@@ -115,10 +118,16 @@ final class MediaLibrary {
     var directory = DirectorySnapshot()
     var loading = false
     var error: String?
+    var channelErrors: [String: String] = [:]
     private let defaults: UserDefaults
     private let repository = GoodPostRepository()
+    @ObservationIgnored private let profileFetcher: @Sendable (DirectoryChannel) async throws -> MediaFeedResult
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard,
+         profileFetcher: @escaping @Sendable (DirectoryChannel) async throws -> MediaFeedResult = {
+             try await MediaLibrary.fetchSource($0)
+         }) {
+        self.profileFetcher = profileFetcher
         self.defaults = defaults
         if let restored = defaults.data(forKey: "media.library.v1").flatMap({ try? JSONDecoder().decode(MediaLibraryState.self, from: $0) }) {
             state = restored
@@ -129,6 +138,21 @@ final class MediaLibrary {
                 categoryId: nil, subcategoryId: nil, sort: 0)]
             persist()
         }
+        repairCachedChannelIDs()
+    }
+
+    private func repairCachedChannelIDs() {
+        let channels = state.channels
+        state.feed = state.feed.map { MediaChannelIdentity.repairing($0, channels: channels) }
+        state.saved = state.saved.map { MediaChannelIdentity.repairing($0, channels: channels) }
+        state.recent = state.recent.map { MediaChannelIdentity.repairing($0, channels: channels) }
+        for index in state.playlists.indices {
+            state.playlists[index].videos = state.playlists[index].videos.map { MediaChannelIdentity.repairing($0, channels: channels) }
+        }
+        state.hiddenChannelIDs = state.hiddenChannelIDs?.map { id in
+            channels.first { MediaChannelIdentity.sourceID(for: $0)?.lowercased() == id.lowercased() }?.id ?? id
+        }
+        persist()
     }
 
     func persist() {
@@ -178,7 +202,7 @@ final class MediaLibrary {
         for index in state.channels.indices {
             let saved = state.channels[index]
             guard let resolved = directory.allChannels.first(where: {
-                $0.platform.lowercased() == saved.platform.lowercased() && $0.handle.lowercased() == saved.handle.lowercased()
+                MediaChannelIdentity.sameProfile($0, saved)
             }) else { continue }
             state.channels[index] = DirectoryChannel(id: saved.id, platform: saved.platform, handle: saved.handle,
                 name: resolved.name ?? saved.name, iconUrl: resolved.iconUrl ?? saved.iconUrl, url: saved.url,
@@ -224,7 +248,7 @@ final class MediaLibrary {
 
         // YouTube concurrently: an RSS feed per channel, and the endpoints do
         // not mind a burst.
-        let youtube = sources.filter { $0.platform == "youtube" }
+        let youtube = sources.filter { MediaChannelIdentity.platform($0.platform) == "youtube" }
         if !youtube.isEmpty {
             let results = await withTaskGroup(of: (String, [LibraryVideo]?).self) { group in
                 for channel in youtube {
@@ -247,10 +271,16 @@ final class MediaLibrary {
         // here would only spend the request to be told the same thing.
         var fetchedOthers: [LibraryVideo] = []
         var firstFailure: String?
-        for channel in sources where channel.platform != "youtube" {
+        for channel in sources where MediaChannelIdentity.platform(channel.platform) != "youtube" {
             do {
-                fetchedOthers += try await Self.fetchSource(channel)
+                fetchedOthers += try await refreshProfile(channel)
+                channelErrors[channel.id] = nil
             } catch {
+                channelErrors[channel.id] = error.localizedDescription
+                if MediaChannelIdentity.platform(channel.platform) == "x", channel.iconUrl == nil,
+                   let avatar = try? await XSource().fetchAvatar(channel.handle) {
+                    applyProfile(MediaFeedResult(username: channel.handle, avatarURL: avatar, items: []), to: channel.id)
+                }
                 failed += 1
                 // Keep the FIRST concrete reason. "1 channel feed couldn't
                 // refresh" is not actionable on its own — the reader cannot tell
@@ -266,13 +296,15 @@ final class MediaLibrary {
         // Instagram and X ACCUMULATE: both hand back only the newest few posts,
         // so replacing would throw away everything older on every refresh. Keeping
         // the older items is how the feed grows past the embed's rolling window.
-        let existingOthers = state.feed.filter { !$0.isYouTube }
+        let fetchedYouTubeIDs = Set(videos.compactMap(\.channelID))
+        let existingOthers = state.feed.filter { !$0.isYouTube || !fetchedYouTubeIDs.contains($0.channelID ?? "") }
         var seen = Set<String>()
         let merged = (videos + fetchedOthers + existingOthers).filter { seen.insert($0.id).inserted }
         if failed == 0 || !merged.isEmpty {
             state.feed = merged.sorted { $0.publishedAt > $1.publishedAt }
             persist()
         }
+        persist()
         if failed > 0 {
             error = "\(failed) channel feed\(failed == 1 ? "" : "s") couldn't refresh. "
                 + (firstFailure ?? "You can still open channels directly.")
@@ -281,16 +313,32 @@ final class MediaLibrary {
 
     /// Fetches a channel from whichever platform it belongs to, throwing the
     /// reason so the caller can report it rather than only counting it.
-    nonisolated private static func fetchSource(_ channel: DirectoryChannel) async throws -> [LibraryVideo] {
-        switch channel.platform.lowercased() {
-        case "instagram":
-            return try await InstagramSource().fetchProfile(channel.handle).items.map { LibraryVideo($0) }
-        case "x", "twitter":
-            return try await XSource().fetchProfile(channel.handle).items.map { LibraryVideo($0) }
-        default:
-            guard let videos = await fetch(channel) else { throw MediaFeedError.unusablePayload }
-            return videos
+    nonisolated private static func fetchSource(_ channel: DirectoryChannel) async throws -> MediaFeedResult {
+        switch MediaChannelIdentity.platform(channel.platform) {
+        case "instagram": return try await InstagramSource().fetchProfile(MediaChannelIdentity.handle(channel.handle))
+        case "x": return try await XSource().fetchProfile(channel.handle)
+        default: throw MediaFeedError.invalidHandle
         }
+    }
+
+    func refreshProfile(_ channel: DirectoryChannel) async throws -> [LibraryVideo] {
+        let result = try await profileFetcher(channel)
+        let items = result.items.map {
+            var video = LibraryVideo($0)
+            video.channelID = channel.id
+            return video
+        }
+        applyProfile(result, to: channel.id)
+        persist()
+        return items
+    }
+
+    private func applyProfile(_ result: MediaFeedResult, to channelID: String) {
+        guard let index = state.channels.firstIndex(where: { $0.id == channelID }) else { return }
+        let channel = state.channels[index]
+        state.channels[index] = DirectoryChannel(id: channel.id, platform: channel.platform, handle: channel.handle,
+            name: result.displayName ?? channel.name, iconUrl: result.avatarURL ?? channel.iconUrl, url: channel.url,
+            categoryId: channel.categoryId, subcategoryId: channel.subcategoryId, sort: channel.sort)
     }
 
     nonisolated private static func fetch(_ channel: DirectoryChannel) async -> [LibraryVideo]? {
@@ -325,9 +373,9 @@ final class MediaLibrary {
     }
 
     func subscribe(_ channel: DirectoryChannel) {
-        if state.channels.contains(where: { $0.id == channel.id }) {
-            state.channels.removeAll { $0.id == channel.id }
-            state.hiddenChannelIDs?.removeAll { $0 == channel.id }
+        if let existing = state.channels.first(where: { $0.id == channel.id || MediaChannelIdentity.sameProfile($0, channel) }) {
+            state.channels.removeAll { $0.id == existing.id }
+            state.hiddenChannelIDs?.removeAll { $0 == existing.id }
         }
         else { state.channels.append(channel) }
         persist()

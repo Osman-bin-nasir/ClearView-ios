@@ -61,11 +61,22 @@ final class MediaAudioTests: XCTestCase {
         XCTAssertEqual(YouTubeAudioExtractor.selectBestAudio(formats)?.bitrate, 80_000)
     }
 
-    func testFallsBackToOpusWhenNothingElseIsOffered() {
-        // A saved .webm will not play, but dropping the video entirely would be
-        // worse than offering it — the download still succeeds.
+    func testRejectsUnsupportedWebMInsteadOfSavingUnplayableAudio() {
         let formats = [format(251, #"audio/webm; codecs="opus""#, 136_544)]
-        XCTAssertEqual(YouTubeAudioExtractor.selectBestAudio(formats)?.itag, 251)
+        XCTAssertNil(YouTubeAudioExtractor.selectBestAudio(formats))
+    }
+
+    func testDirectPlayableAudioWinsOverAHigherBitrateCipheredFormat() {
+        let formats = [format(140, "audio/mp4", 200_000, url: nil), format(139, "audio/mp4", 80_000)]
+        XCTAssertEqual(YouTubeAudioExtractor.selectBestAudio(formats)?.itag, 139)
+    }
+
+    func testAnUnsupportedOriginalTrackDoesNotSilentlySwitchToADub() {
+        let formats = [
+            format(251, "audio/webm", 140_000, audioIsDefault: true, hasAudioTrack: true),
+            format(140, "audio/mp4", 130_000, audioIsDefault: false, hasAudioTrack: true)
+        ]
+        XCTAssertNil(YouTubeAudioExtractor.selectBestAudio(formats))
     }
 
     func testSelectReturnsNilForNoFormats() {

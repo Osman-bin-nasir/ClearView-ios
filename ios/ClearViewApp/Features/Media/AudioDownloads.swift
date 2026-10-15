@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Observation
 
 /// Live progress for one in-flight download.
@@ -8,6 +9,7 @@ struct AudioDownloadProgress: Equatable {
         case resolving
         /// Transferring bytes.
         case downloading
+        case processing
     }
 
     var phase: Phase = .resolving
@@ -25,19 +27,22 @@ enum AudioDownloadError: LocalizedError {
     case invalidResponse
     case rangeIgnored
     case empty
+    case incomplete
 
     var errorDescription: String? {
         switch self {
         case .http(let status) where status == 429 || status >= 500:
-            return "YouTube refused the download (HTTP \(status)). Try again in a moment."
+            return "The media server refused the download (HTTP \(status)). Try again in a moment."
         case .http(let status):
-            return "YouTube refused the download (HTTP \(status))."
+            return "The media server refused the download (HTTP \(status))."
         case .invalidResponse:
             return "The download server sent a response this app could not read."
         case .rangeIgnored:
             return "The download server ignored a partial-range request."
         case .empty:
             return "The download finished but produced no audio."
+        case .incomplete:
+            return "The audio download was interrupted before all bytes arrived. Try again."
         }
     }
 }
@@ -85,6 +90,7 @@ struct AudioFileDownloader {
         expectedTotal: Int64?,
         onProgress: @escaping (AudioDownloadProgress) -> Void
     ) async throws -> Int64 {
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fileManager.removeItem(at: partURL)
@@ -93,6 +99,7 @@ struct AudioFileDownloader {
 
         let startedAt = Date()
         let probe = try? await probeTotal(url: url)
+        try Task.checkCancellation()
         let total = probe?.total ?? expectedTotal
 
         /// Serialises every progress read so concurrent chunks cannot report a
@@ -121,7 +128,13 @@ struct AudioFileDownloader {
         if let probe, probe.supportsRanges, let total, total > 0, total <= Self.maxParallelTotalBytes {
             let ranges = AudioDownloadChunking.chunkRanges(total: total)
             if ranges.count > 1 {
-                try await downloadParallel(url: url, ranges: ranges, total: total, partURL: partURL, reporter: reporter)
+                do {
+                    try await downloadParallel(url: url, ranges: ranges, total: total, partURL: partURL, reporter: reporter)
+                } catch AudioDownloadError.rangeIgnored {
+                    try Task.checkCancellation()
+                    reporter.reset()
+                    try await downloadSingle(url: url, partURL: partURL, reporter: reporter)
+                }
             } else {
                 try await downloadSingle(url: url, partURL: partURL, reporter: reporter)
             }
@@ -131,6 +144,8 @@ struct AudioFileDownloader {
 
         let size = (try? fileManager.attributesOfItem(atPath: partURL.path)[.size] as? NSNumber)?.int64Value ?? 0
         guard size > 0 else { throw AudioDownloadError.empty }
+        guard size == reporter.bytesWritten, total.map({ size == $0 }) ?? true else { throw AudioDownloadError.incomplete }
+        try Task.checkCancellation()
         try? fileManager.removeItem(at: destination)
         try fileManager.moveItem(at: partURL, to: destination)
         return size
@@ -147,6 +162,7 @@ struct AudioFileDownloader {
         FileManager.default.createFile(atPath: partURL.path, contents: nil)
         var request = URLRequest(url: url)
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         request.setValue("audio/*,*/*;q=0.9", forHTTPHeaderField: "Accept")
         try await stream(request, into: partURL, at: 0) { delta in reporter.add(delta) }
     }
@@ -171,6 +187,7 @@ struct AudioFileDownloader {
                 group.addTask {
                     var request = URLRequest(url: url)
                     request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+                    request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
                     request.setValue("bytes=\(range.lowerBound)-\(range.upperBound)", forHTTPHeaderField: "Range")
                     request.setValue("audio/*,*/*;q=0.9", forHTTPHeaderField: "Accept")
                     try await self.stream(request, into: partURL, at: range.lowerBound) { delta in
@@ -195,19 +212,33 @@ struct AudioFileDownloader {
         guard http.statusCode == 200 || http.statusCode == 206 else {
             throw AudioDownloadError.http(http.statusCode)
         }
-        // A ranged request answered with a full 200 would be written at the
-        // chunk's offset and corrupt the file, so refuse it explicitly.
-        if offset > 0 && http.statusCode == 200 { throw AudioDownloadError.rangeIgnored }
+        if let type = http.mimeType, type.contains("html") || type.contains("json") {
+            throw AudioDownloadError.invalidResponse
+        }
+        var expectedBytes: Int64? = http.expectedContentLength > 0 ? http.expectedContentLength : nil
+        if let rangeHeader = request.value(forHTTPHeaderField: "Range") {
+            guard http.statusCode == 206 else { throw AudioDownloadError.rangeIgnored }
+            let wanted = rangeHeader.replacingOccurrences(of: "bytes=", with: "").split(separator: "-")
+            guard wanted.count == 2, let start = Int64(wanted[0]), let end = Int64(wanted[1]),
+                  let actual = http.value(forHTTPHeaderField: "Content-Range"),
+                  actual.lowercased().hasPrefix("bytes \(start)-\(end)/") else { throw AudioDownloadError.rangeIgnored }
+            expectedBytes = end - start + 1
+        } else if http.statusCode == 206 {
+            throw AudioDownloadError.invalidResponse
+        }
 
         let handle = try FileHandle(forWritingTo: partURL)
         defer { try? handle.close() }
         if offset > 0 { try handle.seek(toOffset: UInt64(offset)) }
 
+        var received: Int64 = 0
         var buffer = Data()
         buffer.reserveCapacity(Self.bufferSize)
         for try await byte in bytes {
             try Task.checkCancellation()
             buffer.append(byte)
+            received += 1
+            if let expectedBytes, received > expectedBytes { throw AudioDownloadError.incomplete }
             if buffer.count >= Self.bufferSize {
                 try handle.write(contentsOf: buffer)
                 onBytes(Int64(buffer.count))
@@ -218,6 +249,7 @@ struct AudioFileDownloader {
             try handle.write(contentsOf: buffer)
             onBytes(Int64(buffer.count))
         }
+        if let expectedBytes, received != expectedBytes { throw AudioDownloadError.incomplete }
     }
 
     private static let bufferSize = 256 * 1024
@@ -230,9 +262,11 @@ struct AudioFileDownloader {
     private func probeTotal(url: URL) async throws -> (total: Int64?, supportsRanges: Bool) {
         var request = URLRequest(url: url)
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        let (_, response) = try await session.data(for: request)
+        let (_, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw AudioDownloadError.invalidResponse }
+        guard http.statusCode == 200 || http.statusCode == 206 else { throw AudioDownloadError.http(http.statusCode) }
         if http.statusCode == 206 {
             let total = AudioDownloadChunking.parseContentRangeTotal(http.value(forHTTPHeaderField: "Content-Range"))
             if let total { return (total, true) }
@@ -264,6 +298,20 @@ private final class ProgressReporter {
         self.total = total
         self.startedAt = startedAt
         self.onProgress = onProgress
+    }
+
+    var bytesWritten: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return written
+    }
+
+    func reset() {
+        lock.lock()
+        written = 0
+        lastReported = 0
+        lock.unlock()
+        onProgress(0)
     }
 
     func add(_ delta: Int64) {
@@ -316,7 +364,8 @@ final class AudioDownloads {
         self.extractor = extractor
         self.downloader = downloader
         try? store.ensureDirectory()
-        items = store.load().sorted { $0.downloadedAt > $1.downloadedAt }
+        items = store.load().filter { FileManager.default.fileExists(atPath: store.fileURL(for: $0).path) }
+            .sorted { $0.downloadedAt > $1.downloadedAt }
     }
 
     // MARK: - Queries
@@ -326,7 +375,7 @@ final class AudioDownloads {
     }
 
     func isDownloaded(_ videoId: String) -> Bool {
-        item(for: videoId) != nil
+        fileURL(for: videoId) != nil
     }
 
     func isDownloading(_ videoId: String) -> Bool {
@@ -350,7 +399,7 @@ final class AudioDownloads {
     /// that is actually fetched comes from the extractor, never from the video.
     func download(_ video: LibraryVideo, source: String = AudioDownloadItem.sourceRSS) {
         let videoId = video.id
-        guard tasks[videoId] == nil, !isDownloaded(videoId) else { return }
+        guard tasks[videoId] == nil, fileURL(for: videoId) == nil else { return }
         errors[videoId] = nil
         pendingTitles[videoId] = video.title
         progress[videoId] = AudioDownloadProgress(phase: .resolving)
@@ -364,11 +413,18 @@ final class AudioDownloads {
                 self.pendingTitles[videoId] = nil
             }
             do {
-                let extracted = try await self.extractor.extractAudio(videoId: videoId)
+                let extracted: ExtractedAudio
+                if video.isYouTube {
+                    extracted = try await self.extractor.extractAudio(videoId: videoId)
+                } else {
+                    let url = try await SocialMediaStreamResolver.shared.resolve(video)
+                    guard url.pathExtension.lowercased() != "m3u8" else { throw AudioExtractionError.noAudioStream }
+                    extracted = ExtractedAudio(url: url, fileExtension: "mp4", mimeType: "video/mp4", bitrate: 0, contentLength: nil)
+                }
                 try Task.checkCancellation()
-                let destination = self.store.audioDirectory
+                var destination = self.store.audioDirectory
                     .appendingPathComponent("\(videoId).\(extracted.fileExtension)")
-                let size = try await self.downloader.download(
+                var size = try await self.downloader.download(
                     url: extracted.url,
                     partURL: self.store.partURL(videoId: videoId),
                     destination: destination,
@@ -376,6 +432,30 @@ final class AudioDownloads {
                 ) { update in
                     Task { @MainActor [weak self] in self?.progress[videoId] = update }
                 }
+                if extracted.mimeType.hasPrefix("video/") {
+                    self.progress[videoId] = AudioDownloadProgress(phase: .processing)
+                    let original = destination
+                    defer { try? FileManager.default.removeItem(at: original) }
+                    destination = self.store.audioDirectory.appendingPathComponent("\(videoId).m4a")
+                    let temporary = self.store.audioDirectory.appendingPathComponent("\(videoId).audio.part.m4a")
+                    defer { try? FileManager.default.removeItem(at: temporary) }
+                    try? FileManager.default.removeItem(at: temporary)
+                    guard let export = AVAssetExportSession(asset: AVURLAsset(url: original), presetName: AVAssetExportPresetAppleM4A) else {
+                        throw AudioExtractionError.noAudioStream
+                    }
+                    try await export.export(to: temporary, as: .m4a)
+                    try Task.checkCancellation()
+                    try? FileManager.default.removeItem(at: destination)
+                    try FileManager.default.moveItem(at: temporary, to: destination)
+                    size = (try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber)?.int64Value ?? 0
+                    guard size > 0 else { throw AudioDownloadError.empty }
+                }
+                let asset = AVURLAsset(url: destination)
+                guard try await asset.load(.isPlayable), !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else {
+                    try? FileManager.default.removeItem(at: destination)
+                    throw AudioExtractionError.noAudioStream
+                }
+                try Task.checkCancellation()
                 self.finish(video: video, extracted: extracted, destination: destination, size: size, source: source)
             } catch is CancellationError {
                 // Cancelling is an outcome the reader asked for, not an error.
@@ -439,7 +519,8 @@ final class AudioDownloads {
     /// Re-reads the manifest from disk. The screen calls this on appear so a
     /// download that finished while the app was elsewhere shows up.
     func reload() {
-        items = store.load().sorted { $0.downloadedAt > $1.downloadedAt }
+        items = store.load().filter { FileManager.default.fileExists(atPath: store.fileURL(for: $0).path) }
+            .sorted { $0.downloadedAt > $1.downloadedAt }
     }
 
     private func persist() {

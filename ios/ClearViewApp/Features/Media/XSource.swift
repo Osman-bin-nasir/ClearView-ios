@@ -58,7 +58,10 @@ struct XSource {
             throw MediaFeedError.unusablePayload
         }
         MediaLog.feeds.info("x: '\(username, privacy: .public)' -> \(items.count, privacy: .public) posts")
-        return MediaFeedResult(username: username, displayName: "@\(username)", avatarURL: nil, items: items)
+        let profile = XFeedParser.profile(body: body, username: username)
+        var avatar = profile.avatarURL
+        if avatar == nil { avatar = try? await fetchAvatar(username) }
+        return MediaFeedResult(username: username, displayName: profile.displayName ?? "@\(username)", avatarURL: avatar, items: items)
     }
 
     /// The raw syndication body for a handle, plus the resolved username.
@@ -244,6 +247,27 @@ enum XFeedParser {
         }
     }
 
+    /// Read the requested profile's own user object, not a quoted/reposted author.
+    static func profile(body: String, username: String) -> (displayName: String?, avatarURL: String?) {
+        guard let json = nextDataJSON(body),
+              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let props = (root["props"] as? [String: Any])?["pageProps"] as? [String: Any] else { return (nil, nil) }
+        var users: [[String: Any]] = []
+        if let user = props["user"] as? [String: Any] { users.append(user) }
+        if let entries = (props["timeline"] as? [String: Any])?["entries"] as? [[String: Any]] {
+            for entry in entries {
+                if let tweet = (entry["content"] as? [String: Any])?["tweet"] as? [String: Any],
+                   let user = tweet["user"] as? [String: Any] { users.append(user) }
+            }
+        }
+        guard let user = users.first(where: { ($0["screen_name"] as? String)?.lowercased() == username.lowercased() }) else {
+            return (nil, nil)
+        }
+        let candidate = (user["profile_image_url_https"] as? String) ?? (user["profile_image_url"] as? String)
+        let avatar = candidate.flatMap { XSource.isRealAvatarURL($0, username: username) ? $0 : nil }
+        return (user["name"] as? String, avatar)
+    }
+
     /// The `__NEXT_DATA__` JSON, pulled out of its script element.
     private static func nextDataJSON(_ body: String) -> String? {
         guard let marker = body.range(of: "__NEXT_DATA__"),
@@ -263,8 +287,9 @@ enum XFeedParser {
         let id = (tweet["id_str"] as? String) ?? (tweet["id"] as? NSNumber)?.stringValue
         guard let id, !id.isEmpty else { return nil }
         let text = (tweet["full_text"] as? String) ?? (tweet["text"] as? String) ?? ""
-        let media = ((tweet["entities"] as? [String: Any])?["media"] as? [[String: Any]])?.first
-            ?? ((tweet["extended_entities"] as? [String: Any])?["media"] as? [[String: Any]])?.first
+        let attachments = ((tweet["extended_entities"] as? [String: Any])?["media"] as? [[String: Any]])
+            ?? ((tweet["entities"] as? [String: Any])?["media"] as? [[String: Any]]) ?? []
+        let media = attachments.first(where: { $0["video_info"] != nil }) ?? attachments.first
         let image = (media?["media_url_https"] as? String) ?? (media?["media_url"] as? String)
         let videoInfo = media?["video_info"] as? [String: Any]
         let durationMillis = Int64(intValue(videoInfo?["duration_millis"]))
