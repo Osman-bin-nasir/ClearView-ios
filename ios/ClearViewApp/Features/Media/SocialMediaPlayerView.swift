@@ -39,8 +39,11 @@ struct SocialMediaPlayerView: View {
                     .buttonStyle(.bordered).accessibilityIdentifier("media.social.audioMode")
                 }
                 if let item = downloads.item(for: video.id), downloads.isDownloaded(video.id) {
-                    Label("Audio downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Color.cvPrimary)
-                    Button("Remove audio", role: .destructive) { downloads.remove(item) }
+                    // Play only, for the same reason as the video player: removing a
+                    // download belongs to the Downloads list, not under the play
+                    // button.
+                    Button { playOffline(item) } label: { Label("Play offline", systemImage: "play.circle.fill") }
+                        .buttonStyle(.bordered).accessibilityIdentifier("media.social.playOffline")
                 } else if let update = downloads.progress[video.id] {
                     ProgressView(value: update.fraction >= 0 ? update.fraction : nil)
                     Text(update.phase == .processing ? "Preparing audio file…" : "Downloading audio…").font(.caption)
@@ -67,6 +70,22 @@ struct SocialMediaPlayerView: View {
             }
             player?.pause()
         }
+    }
+
+    /// Plays the downloaded audio for this post — the reason the Download button
+    /// became a play button once the file exists.
+    private func playOffline(_ item: AudioDownloadItem) {
+        guard let file = downloads.fileURL(for: video.id) else {
+            downloads.remove(item)
+            return
+        }
+        player?.pause()
+        AudioPlaybackController.shared.playLocal(
+            videoId: video.id, title: video.title, channel: video.channel,
+            artworkURL: video.thumbnail, fileURL: file
+        )
+        downloads.markPlayed(video.id)
+        showAudio = true
     }
 
     private func load() async {

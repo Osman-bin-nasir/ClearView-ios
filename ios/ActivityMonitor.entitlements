@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>com.apple.developer.family-controls</key><true/>
+    <!-- DEMO BUILD ONLY — restored before any real/paid-team build.
+
+         com.apple.developer.family-controls is dropped here for the same reason as
+         in ClearView.entitlements: a free Personal Team cannot be issued it, so the
+         device build failed with "Provisioning profile … doesn't include the Family
+         Controls (Development) capability". The monitor is only reachable once
+         Screen Time authorization is granted, so with the capability gone the
+         Device Protection screen reports the failure instead of applying rules.
+
+         Restore with:  git checkout -- ios/ActivityMonitor.entitlements -->
     <key>com.apple.security.application-groups</key><array><string>group.com.muddassir.clearview</string></array>
 </dict></plist>

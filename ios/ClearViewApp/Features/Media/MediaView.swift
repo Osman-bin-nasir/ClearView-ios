@@ -7,6 +7,11 @@ struct MediaView: View {
     @State private var searchOpen = false
     @State private var browser: BrowserDestination?
     @State private var playingVideo: LibraryVideo?
+    /// The Short the reader tapped, which opens the pager at that one. A Short is
+    /// watched in the pager rather than in `MediaVideoPlayerView`: one clip per
+    /// screen, the next a swipe away, and none of the timeline furniture a
+    /// vertical clip has no use for.
+    @State private var shortsPager: LibraryVideo?
     @State private var showAdd = false
     @State private var showChannels = false
     @State private var showAddChannel = false
@@ -226,6 +231,13 @@ struct MediaView: View {
                     if let reference = YouTubeLink.parse(video.url) { MediaVideoPlayerView(video: video, reference: reference, library: library) }
                     else { SocialMediaPlayerView(video: video, library: library) }
                 }
+                // Full screen, not a push: the pager is a place to keep swiping,
+                // and the tab bar under it would be an invitation to leave.
+                // The list is the shelf's own order, so swiping up in the pager
+                // walks the Shorts in the order they were listed on the shelf.
+                .fullScreenCover(item: $shortsPager) { start in
+                    ShortsPagerView(shorts: videos.filter(\.isShortsEntry), startAt: start, library: library)
+                }
                 .alert("Not available yet", isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
                     Button("OK", role: .cancel) { unavailable = nil }
                 } message: { Text(unavailable ?? "") }
@@ -274,16 +286,45 @@ struct MediaView: View {
                     NavigationLink { HaramaynView() } label: { avatarLabel("Haramayn", symbol: "tv", color: .green) }.buttonStyle(.plain)
                     NavigationLink { MediaDirectoryView(library: library) } label: { avatarLabel("Directory", symbol: "photo.on.rectangle", color: .blue) }.buttonStyle(.plain)
                     ForEach(library.activeChannels) { channel in
-                        Button { selectedChannel = selectedChannel == channel.id ? nil : channel.id } label: {
+                        // The ✕ is the item's own sibling in a ZStack, NOT an overlay on
+                        // its button. Both arrangements were built; only this one works.
+                        // An overlay's button loses every tap to the button underneath
+                        // it — a UI test caught the avatar being selected and the feed
+                        // filtered instead of the confirmation appearing — whereas a
+                        // sibling drawn last is the view the tap lands on. The avatar's
+                        // own tap is a gesture rather than a Button for the same reason.
+                        //
+                        // The ✕ asks before it removes (`pendingRemoval`): it is a small
+                        // target in the corner of an avatar, which is exactly where a
+                        // thumb lands while scrolling the strip.
+                        ZStack(alignment: .topTrailing) {
                             VStack(spacing: 7) {
                                 CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 50).padding(3)
                                     .overlay(Circle().stroke(selectedChannel == channel.id ? Color.cvPrimary : Color.clear, lineWidth: 2))
                                 Text(channel.displayName).font(.caption.weight(.semibold)).lineLimit(1).frame(width: 68)
                             }
-                        }.buttonStyle(.plain).contextMenu {
-                            Button("Open channel") { browser = BrowserDestination(channel.url) }
-                            Button("Hide from All Feed") { library.toggleChannelHidden(channel) }
-                            Button("Remove channel", role: .destructive) { pendingRemoval = channel }
+                            .contentShape(Rectangle())
+                            .onTapGesture { selectedChannel = selectedChannel == channel.id ? nil : channel.id }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityLabel(channel.displayName)
+                            .contextMenu {
+                                Button("Open channel") { browser = BrowserDestination(channel.url) }
+                                Button("Hide from All Feed") { library.toggleChannelHidden(channel) }
+                                Button("Remove channel", role: .destructive) { pendingRemoval = channel }
+                            }
+                            Button { pendingRemoval = channel } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Color.cvOnSurfaceVariant)
+                                    .frame(width: 20, height: 20)
+                                    .background(Color.cvSurface, in: Circle())
+                                    .overlay(Circle().stroke(Color.cvOutlineVariant, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 1).padding(.trailing, 6)
+                            .accessibilityLabel("Remove \(channel.displayName)")
+                            .accessibilityIdentifier("media.channel.remove")
                         }
                     }
                     avatar("Add", symbol: "plus", color: .cvPrimaryContainer) { showAddChannel = true }.accessibilityLabel("Add channel")
@@ -380,7 +421,7 @@ struct MediaView: View {
 
     private func shortCard(_ video: LibraryVideo) -> some View {
         ZStack(alignment: .topTrailing) {
-            Button { open(video) } label: {
+            Button { library.open(video); shortsPager = video } label: {
                 thumbnail(video, showDuration: false).frame(width: 136, height: 242)
                     .overlay(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom))
                     .overlay(alignment: .bottomLeading) {
@@ -427,9 +468,12 @@ struct MediaView: View {
                     placeholder: { Color.cvSurfaceContainer.frame(height: 160) }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
+            // No "Open post" row: a post is read here, in the app, and the row's
+            // only job was to hand the reader back to Instagram or X — leaving the
+            // app to read what the app already shows. The ⋯ menu keeps Share for a
+            // reader who does want the original.
             Text(post.bodyText?.isEmpty == false ? post.bodyText! : post.title)
                 .font(.body).textSelection(.enabled)
-            Button("Open post") { open(post) }.font(.subheadline.bold())
         }
         .padding(14).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
     }

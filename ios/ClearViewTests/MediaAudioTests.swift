@@ -373,6 +373,107 @@ final class MediaAudioTests: XCTestCase {
         XCTAssertEqual(posts[1].thumbnailUrl, "https://pbs.twimg.com/media/TWO.jpg")
     }
 
+    // MARK: - X, the logged-out profile page
+
+    /// A page in the shape the live one serves: a flight stream, not markup — unquoted
+    /// keys, `$R[n]=` references, strings escaped once. Trimmed to what the reader reads,
+    /// with the two things the live page really carries and that must NOT become posts
+    /// left in: a record written by someone else, and a quoted post nested inside the
+    /// record that quotes it.
+    private func xProfilePageBody() -> String {
+        """
+        <html><script>(self.$R=self.$R||{})["tsr"]=[];</script>\
+        result:$R[1]={__typename:"User",avatar:{image_url:"https://pbs.twimg.com/profile_images/1/a_normal.jpg"},core:{name:"Test User",screen_name:"testuser"}}\
+        tweet_results:$R[51]={id:"VHdlZXRSZXN1bHRzOjE=",rest_id:"1234567890123456789",result:$R[52]={__isTweetResult:"Tweet",\
+        core:{user_results:$R[53]={result:$R[54]={__typename:"User",avatar:{image_url:"https://pbs.twimg.com/profile_images/1/a_normal.jpg"},core:{name:"Test User",screen_name:"testuser"}}}},\
+        counts:{favorite_count:7},details:$R[55]={created_at_ms:1792029251000,full_text:"First line\\n\\nSecond line 😀😀😀"},\
+        media_entities2:$R[56]=[{media_url_https:"https://pbs.twimg.com/media/ONE.jpg",type:"photo"}]}\
+        tweet_results:$R[61]={id:"VHdlZXRSZXN1bHRzOjI=",rest_id:"1234567890123456790",result:$R[62]={__isTweetResult:"Tweet",\
+        core:{user_results:$R[63]={result:$R[64]={__typename:"User",core:{name:"Someone Else",screen_name:"someoneelse"}}}},\
+        details:$R[65]={created_at_ms:1792029300000,full_text:"another account's post"}}\
+        tweet_results:$R[71]={id:"VHdlZXRSZXN1bHRzOjM=",rest_id:"1234567890123456791",result:$R[72]={__isTweetResult:"Tweet",\
+        core:{user_results:$R[73]={result:$R[74]={__typename:"User",core:{name:"Test User",screen_name:"testuser"}}}},\
+        details:$R[75]={created_at_ms:1792029400000,full_text:"A clip"},\
+        media_entities2:$R[76]=[{media_url_https:"https://pbs.twimg.com/amplify_video_thumb/9/img/poster.jpg",type:"video",\
+        video_info:$R[77]={duration_millis:61500,variants:$R[78]=[\
+        $R[79]={content_type:"application/x-mpegURL",url:"https://video.twimg.com/x/pl/playlist.m3u8?tag=29"},\
+        $R[80]={bitrate:256000,content_type:"video/mp4",url:"https://video.twimg.com/x/vid/low.mp4?tag=29"},\
+        $R[81]={bitrate:2176000,content_type:"video/mp4",url:"https://video.twimg.com/x/vid/high.mp4?tag=29"}]}}],\
+        quoted_tweet_results:$R[82]={id:"VHdlZXRSZXN1bHRzOjQ=",rest_id:"1234567890123456792",result:$R[83]={__isTweetResult:"Tweet",\
+        core:{user_results:$R[84]={result:$R[85]={__typename:"User",core:{name:"Quoted Person",screen_name:"quotedperson"}}}},\
+        details:$R[86]={created_at_ms:1792029450000,full_text:"the quoted post"}}}\
+        </script></html>
+        """
+    }
+
+    func testXProfilePageParsesTheAccountsOwnPosts() throws {
+        let posts = XFeedParser.parseProfilePage(body: xProfilePageBody(), username: "testuser")
+        XCTAssertEqual(posts.count, 2)
+
+        let first = try XCTUnwrap(posts.first)
+        XCTAssertEqual(first.videoId, "x_1234567890123456789")
+        XCTAssertEqual(first.platform, .x)
+        XCTAssertEqual(first.channelName, "@testuser")
+        // The post's real time comes from `created_at_ms`, in milliseconds.
+        XCTAssertEqual(first.publishedAtEpochMillis, 1_792_029_251_000)
+        XCTAssertEqual(first.thumbnailUrl, "https://pbs.twimg.com/media/ONE.jpg")
+        XCTAssertEqual(first.sourceUrl, "https://x.com/testuser/status/1234567890123456789")
+        // The escapes are decoded once: the paragraph break survives in the full text,
+        // and the card's one-line label has it flattened.
+        XCTAssertEqual(first.bodyText, "First line\n\nSecond line 😀😀😀")
+        XCTAssertFalse(first.title.contains("\n"))
+        XCTAssertFalse(first.title.contains("\\"))
+
+        let second = try XCTUnwrap(posts.last)
+        XCTAssertEqual(second.videoId, "x_1234567890123456791")
+        XCTAssertEqual(second.bodyText, "A clip")
+        // Highest bitrate wins: the playlist cannot be seeked or downloaded, and the
+        // lowest mp4 is not what the post showed.
+        XCTAssertEqual(second.mediaUrl, "https://video.twimg.com/x/vid/high.mp4?tag=29")
+        XCTAssertEqual(second.durationSeconds, 61)
+        XCTAssertEqual(second.thumbnailUrl, "https://pbs.twimg.com/amplify_video_thumb/9/img/poster.jpg")
+    }
+
+    func testXProfilePageKeepsOnlyTheAccountsOwnPosts() {
+        // The live page carries other people's replies in the same shape, and a quoted
+        // post nested inside the record that quotes it. Either one read as a post of its
+        // own files someone else's words under this channel.
+        let posts = XFeedParser.parseProfilePage(body: xProfilePageBody(), username: "testuser")
+        let texts = posts.map(\.bodyText)
+        XCTAssertFalse(texts.contains { $0.contains("another account's post") })
+        XCTAssertFalse(texts.contains { $0.contains("the quoted post") })
+        XCTAssertTrue(texts.allSatisfy { $0.contains("account's post") == false })
+        XCTAssertEqual(XFeedParser.pageRecordCount(xProfilePageBody()), 4)
+    }
+
+    func testXProfilePageReadsTheProfileNameAndAvatar() {
+        let profile = XFeedParser.profileFromPage(body: xProfilePageBody(), username: "testuser")
+        XCTAssertEqual(profile.displayName, "Test User")
+        XCTAssertEqual(profile.avatarURL, "https://pbs.twimg.com/profile_images/1/a_normal.jpg")
+        // A page with no user object of its own yields nothing, so the caller can fall
+        // back to FxTwitter rather than printing a placeholder as a name.
+        XCTAssertNil(XFeedParser.profileFromPage(body: "<html></html>", username: "testuser").displayName)
+    }
+
+    func testXFlightDecodingLeavesNoStrayBackslashes() {
+        // One layer, single pass: `\n` is a break, `\\` a real backslash, `\u0026` an
+        // ampersand. A chain of replacements gets the order wrong and leaves text that
+        // reads "backslash n" in the middle of a post.
+        XCTAssertEqual(XFeedParser.decodeFlight(#"a\nb"#), "a\nb")
+        XCTAssertEqual(XFeedParser.decodeFlight(#"a\\b"#), #"a\b"#)
+        XCTAssertEqual(XFeedParser.decodeFlight(#"x\u0026y"#), "x&y")
+        XCTAssertEqual(XFeedParser.decodeFlight(#"say \"hi\""#), "say \"hi\"")
+    }
+
+    func testXProfilePageSurvivesNonASCIICharacters() {
+        // The same UTF-16 offset guard as the syndication scanner: the first record's
+        // text is emoji-heavy, and the SECOND record's media must still be read from the
+        // right place. Slicing by `Character` instead of UTF-16 units loses it.
+        let posts = XFeedParser.parseProfilePage(body: xProfilePageBody(), username: "testuser")
+        XCTAssertEqual(posts.last?.bodyText, "A clip")
+        XCTAssertEqual(posts.last?.mediaUrl, "https://video.twimg.com/x/vid/high.mp4?tag=29")
+    }
+
     func testXHandleExtraction() {
         XCTAssertEqual(XSource.extractUsername("@jack"), "jack")
         XCTAssertEqual(XSource.extractUsername("jack"), "jack")

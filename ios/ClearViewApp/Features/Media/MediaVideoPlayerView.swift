@@ -197,20 +197,25 @@ struct MediaVideoPlayerView: View {
 
     /// The Download Audio control, in whichever of its four states applies:
     /// not downloaded, resolving, downloading with progress, already saved.
+    ///
+    /// The saved state offers **Play offline** rather than reporting
+    /// "Downloaded": the reader who tapped Download asked to listen without a
+    /// network, and that is now one tap on this screen instead of a trip to the
+    /// Downloads list.
     @ViewBuilder
     private var downloadAudioButton: some View {
         let item = downloads.isDownloaded(video.id) ? downloads.item(for: video.id) : nil
         let update = downloads.progress[video.id]
         if let item {
-            HStack {
-                Label("Downloaded", systemImage: "checkmark.circle.fill")
-                    .font(.headline).foregroundStyle(Color.cvPrimary)
-                Spacer()
-                Button("Remove", role: .destructive) { downloads.remove(item) }.font(.subheadline.bold())
-            }
-            .padding(.vertical, 15).padding(.horizontal, 18)
-            .background(Color.cvSurfaceVariant, in: Capsule())
-            .accessibilityIdentifier("media.player.downloaded")
+            // Play only. Deleting a download is a decision about the library, not
+            // about this video, and the Downloads list already offers it on the
+            // row's own menu — a destructive button parked under the thumb that
+            // reaches for play is an accident waiting to happen.
+            Button { playOffline(item) } label: {
+                Label("Play offline", systemImage: "play.circle.fill")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 15)
+                    .background(Color.cvSurfaceVariant, in: Capsule())
+            }.buttonStyle(.plain).accessibilityIdentifier("media.player.playOffline")
         } else if let update {
             VStack(spacing: 8) {
                 if update.fraction < 0 {
@@ -235,6 +240,30 @@ struct MediaVideoPlayerView: View {
                     .background(Color.cvSurfaceVariant, in: Capsule())
             }.buttonStyle(.plain).accessibilityIdentifier("media.player.downloadAudio")
         }
+    }
+
+    /// Plays the saved file, from the screen the reader downloaded it on.
+    ///
+    /// Same hand-off as Audio mode with one difference: there is nothing to
+    /// resolve and nothing that can expire, which is the point of the download.
+    /// The position is not carried over from the embedded player deliberately —
+    /// this button is for starting the downloaded track, and Audio mode is the
+    /// control for continuing where the video player is.
+    private func playOffline(_ item: AudioDownloadItem) {
+        guard let fileURL = downloads.fileURL(for: video.id) else {
+            // The manifest outlived its file: drop the row rather than offer a
+            // button that plays nothing.
+            downloads.remove(item)
+            return
+        }
+        saveProgress(force: true)
+        player.command("player.pauseVideo();")
+        AudioPlaybackController.shared.playLocal(
+            videoId: video.id, title: video.title, channel: video.channel,
+            artworkURL: video.thumbnail, fileURL: fileURL
+        )
+        downloads.markPlayed(video.id)
+        showAudioPlayer = true
     }
 
     static func time(_ seconds: Double) -> String {

@@ -40,7 +40,36 @@ struct XSource {
     static func isRateLimited(now: Date = Date()) -> Bool { now < backoffUntil }
 
     /// One handle's posts, or a thrown reason there are none.
+    ///
+    /// The **profile page** is asked first, and that order is the fix: measured on
+    /// 2026-10-16, both hosts of the syndication endpoint (`syndication.twitter.com`
+    /// and its `cdn.` twin) answer `429 Rate limit exceeded` — 20 bytes, no posts —
+    /// for every handle from every network tried, so the endpoint this source was
+    /// built on was answering "rate limited" for every X channel in the app. The
+    /// logged-out profile page still server-renders the account's recent posts into
+    /// its own payload and answers 200.
+    ///
+    /// The syndication endpoint is kept as the second try rather than deleted: its
+    /// payload is the richer one (a whole timeline, with a `created_at` per post),
+    /// and a 429 from one IP range is not proof the endpoint is gone for good.
     func fetchProfile(_ handleOrURL: String) async throws -> MediaFeedResult {
+        guard let requested = Self.extractUsername(handleOrURL) else { throw MediaFeedError.invalidHandle }
+        if let page = try? await fetchProfilePage(requested) {
+            let items = XFeedParser.parseProfilePage(body: page, username: requested)
+            if !items.isEmpty {
+                let profile = XFeedParser.profileFromPage(body: page, username: requested)
+                var avatar = profile.avatarURL
+                if avatar == nil { avatar = try? await fetchAvatar(requested) }
+                MediaLog.feeds.info("x: '\(requested, privacy: .public)' -> \(items.count, privacy: .public) posts (profile page)")
+                return MediaFeedResult(username: requested, displayName: profile.displayName ?? "@\(requested)", avatarURL: avatar, items: items)
+            }
+            MediaLog.feeds.error("""
+                x: profile page for '\(requested, privacy: .public)' carried no posts \
+                (\(page.utf8.count, privacy: .public) bytes, records: \(XFeedParser.pageRecordCount(page), privacy: .public), \
+                hasFullText: \(page.contains("full_text"), privacy: .public))
+                """)
+        }
+
         let (username, body) = try await fetchTimelineBody(handleOrURL)
         let items = XFeedParser.parse(body: body, username: username)
         guard !items.isEmpty else {
@@ -62,6 +91,31 @@ struct XSource {
         var avatar = profile.avatarURL
         if avatar == nil { avatar = try? await fetchAvatar(username) }
         return MediaFeedResult(username: username, displayName: profile.displayName ?? "@\(username)", avatarURL: avatar, items: items)
+    }
+
+    /// The logged-out profile page's HTML, or a thrown reason there is none.
+    ///
+    /// `https://x.com/<handle>` is a page, not an API — it is read for the posts the
+    /// server renders into it, exactly the way `XFeedParser` already reads the
+    /// syndication page's markup. Twitter's own host redirects here, so only `x.com`
+    /// is asked.
+    func fetchProfilePage(_ username: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://x.com/\(username)")!)
+        request.timeoutInterval = 20
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            MediaLog.feeds.error("x: no HTTP response for the profile page of '\(username, privacy: .public)'")
+            throw MediaFeedError.noData
+        }
+        if http.statusCode == 429 { throw MediaFeedError.rateLimited }
+        guard http.statusCode == 200 else {
+            MediaLog.feeds.error("x: profile page HTTP \(http.statusCode, privacy: .public) for '\(username, privacy: .public)'")
+            throw MediaFeedError.http(http.statusCode)
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// The raw syndication body for a handle, plus the resolved username.
@@ -575,4 +629,237 @@ enum XFeedParser {
     }
 
     private static func nowMillis() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+}
+
+// MARK: - The logged-out profile page
+
+/// Posts out of the logged-out profile page.
+///
+/// `https://x.com/<handle>` is neither markup nor JSON: it is a React Server Components
+/// "flight" stream — unquoted keys, `$R[n]=` references instead of repeated objects,
+/// and strings escaped for the `<script>` they sit in. There is no `__NEXT_DATA__`
+/// element to decode and no element to query, which is exactly why `parseSyndication`
+/// (written for the older, sparse syndication HTML where one `data-tweet-id` meant one
+/// post) reads it as noise.
+///
+/// What IS stable is the shape of a post inside it: every post object is introduced by
+/// `__isTweetResult:"Tweet"`, is introduced in turn by the `rest_id` of the entry that
+/// owns it, and carries its author, its text (`details.full_text`), its exact time
+/// (`details.created_at_ms`) and its own media. So a post is read as the span from its
+/// own marker to the next post's marker — the same span-based approach the syndication
+/// scanner uses, and the reason a renamed field or a moved key cannot quietly pair one
+/// post's text with another post's video.
+///
+/// Measured against the live page rather than assumed: three handles on 2026-10-16, and
+/// every `created_at_ms` read agreed with the post id's own snowflake timestamp to
+/// within a second — which is what says the marker really does mark a post.
+extension XFeedParser {
+
+    /// `__isTweetResult:"Tweet"` — where one post object begins.
+    private static let pageRecordMarker = #"__isTweetResult:"Tweet""#
+    /// The post's text. An escaped quote or an escaped newline is allowed inside it, so
+    /// the pattern cannot simply run to the next quote.
+    private static let pageTextPattern = #"full_text:"((?:[^"\\]|\\.)*)""#
+    private static let pageCreatedPattern = #"created_at_ms:(\d{10,17})"#
+    /// The post id of the entry that owns a post object. Snowflake-length only, so the
+    /// profile's own (much shorter) user id can never be mistaken for it.
+    private static let pagePostIDPattern = #"rest_id:"(\d{15,25})""#
+    private static let pageAuthorPattern = #"screen_name:"([A-Za-z0-9_]{1,15})""#
+    private static let pageNamePattern = #"name:"([^"]{1,60})""#
+    private static let pageAvatarPattern = #"image_url:"(https://pbs\.twimg\.com/profile_images/[^"]+)""#
+    private static let pageVideoVariantPattern = #"bitrate:(\d+),content_type:"video/mp4",url:"([^"]+)""#
+    private static let pageVideoMP4Pattern = #"content_type:"video/mp4",url:"([^"]+)""#
+    private static let pageVideoInfoMarker = #"video_info:"#
+    private static let pageDurationPattern = #"duration_millis:(\d{2,9})"#
+
+    /// How far past a post's marker its own fields can sit, and how far back the id that
+    /// owns it was written — the id introduces the object, so it precedes it.
+    private static let pageRecordWindow = 9_000
+    private static let pageIdentityWindow = 600
+    private static let pageProfileWindow = 700
+
+    /// The account's own posts, in page order.
+    ///
+    /// Only posts AUTHORED BY the requested handle are kept. The page's stream is not
+    /// one timeline: alongside the account's originals it carries a module of other
+    /// people's replies to it — measured on the elonmusk page, six posts by the account
+    /// and four by strangers, all in the same `tweet_results` shape. Taking the stream
+    /// whole put four strangers' replies in the channel's feed.
+    static func parseProfilePage(body: String, username: String) -> [MediaVideo] {
+        let starts = matches(pageRecordMarker, in: body).map { $0.range.location }
+        var posts: [MediaVideo] = []
+        for (index, start) in starts.enumerated() {
+            let limit = index + 1 < starts.count
+                ? starts[index + 1]
+                : min(body.utf16.count, start + pageRecordWindow)
+            guard limit > start else { continue }
+            let record = substring(body, start, limit - start)
+            let before = substring(body, max(0, start - pageIdentityWindow), min(pageIdentityWindow, start))
+
+            // A quoted post is nested INSIDE the post that quotes it, so its marker
+            // sits within another record's span. It is told apart by the entry that
+            // owns it: `quoted_tweet_results` rather than `tweet_results`. Reading it as
+            // a post of its own would file someone else's text under this channel's
+            // name.
+            if isQuotedRecord(before) { continue }
+
+            guard let authorMatch = matches(pageAuthorPattern, in: record).first,
+                  let author = group(authorMatch, 1, in: record),
+                  author.lowercased() == username.lowercased() else { continue }
+
+            guard let id = matches(pagePostIDPattern, in: before).last.flatMap({ group($0, 1, in: before) }) else { continue }
+
+            let rawText = matches(pageTextPattern, in: record).first.flatMap { group($0, 1, in: record) } ?? ""
+            let text = decodeFlight(rawText).trimmingCharacters(in: .whitespacesAndNewlines)
+            let card = pageTitle(text)
+            let created = matches(pageCreatedPattern, in: record).first
+                .flatMap { group($0, 1, in: record) }
+                .flatMap { Int64($0) }
+            let video = firstPageVideo(record)
+            posts.append(item(
+                username: author,
+                stableId: id,
+                title: card.isEmpty ? "@\(author) post" : card,
+                link: "https://x.com/\(author)/status/\(id)",
+                published: created ?? snowflakeTime(id) ?? nowMillis(),
+                imageURL: firstMediaImage(record),
+                mediaURL: video,
+                durationSeconds: video.flatMap { pageDuration(for: record, mediaURL: $0) } ?? 0,
+                bodyText: text
+            ))
+        }
+        return posts
+    }
+
+    /// Whether a record, given the text in front of its marker, is a quoted post rather
+    /// than an entry of the timeline itself.
+    ///
+    /// The nearest of the two markers wins: `quoted_tweet_results` introduces a post
+    /// nested inside the one that quotes it, `tweet_results` an entry of its own. A
+    /// record with neither marker in front of it is read as an entry — the first posts
+    /// of a page arrive before either wrapper does.
+    private static func isQuotedRecord(_ before: String) -> Bool {
+        guard let quoted = before.range(of: "quoted_tweet_results:", options: .backwards) else { return false }
+        guard let entry = before.range(of: "tweet_results:", options: .backwards) else { return true }
+        return quoted.lowerBound > entry.lowerBound
+    }
+
+    /// How many post objects a page carried.
+    ///
+    /// For the log line that has to tell "this account posted nothing" from "the
+    /// payload moved out from under the reader", which are the same empty feed
+    /// otherwise.
+    static func pageRecordCount(_ body: String) -> Int {
+        matches(pageRecordMarker, in: body).count
+    }
+
+    /// The requested profile's display name and avatar, read from the page's own user
+    /// objects.
+    ///
+    /// Both are optional on purpose: a page that carried no posts carries no user
+    /// object either, and the caller then falls back to FxTwitter's profile API — which
+    /// answers even when a timeline does not. The name and the avatar are written
+    /// immediately BEFORE the `screen_name` they belong to, so they are read out of the
+    /// text in front of the handle rather than searched for page-wide.
+    static func profileFromPage(body: String, username: String) -> (displayName: String?, avatarURL: String?) {
+        guard let author = matches(pageAuthorPattern, in: body).first(where: {
+            group($0, 1, in: body)?.lowercased() == username.lowercased()
+        }) else { return (nil, nil) }
+        let start = author.range.location
+        let before = substring(body, max(0, start - pageProfileWindow), min(pageProfileWindow, start))
+        let name = matches(pageNamePattern, in: before).last
+            .flatMap { group($0, 1, in: before) }
+            .map(decodeFlight)
+        let avatar = matches(pageAvatarPattern, in: before).last.flatMap { group($0, 1, in: before) }
+        return (name, avatar.flatMap { XSource.isRealAvatarURL($0, username: username) ? $0 : nil })
+    }
+
+    /// A string read out of the flight stream.
+    ///
+    /// The payload is JavaScript, so its strings are escaped the way JSON is — a
+    /// paragraph break arrives as `\n` and a quote as `\"`. The syndication page is
+    /// escaped TWICE (once for its own JSON, once for the `<script>` holding it), which
+    /// is why `unescape` eats `\n` down to a space: run against this payload it leaves a
+    /// stray backslash in front of every paragraph break. This decodes ONE layer, with a
+    /// single pass rather than a chain of replacements, because a chain has to get the
+    /// order of `\\` versus `\n` right and quietly mangles text when it does not.
+    static func decodeFlight(_ value: String) -> String {
+        var decoded = String()
+        decoded.reserveCapacity(value.count)
+        var iterator = value.makeIterator()
+        while let character = iterator.next() {
+            guard character == "\\" else {
+                decoded.append(character)
+                continue
+            }
+            guard let escape = iterator.next() else {
+                decoded.append("\\")
+                break
+            }
+            switch escape {
+            case "n", "r": decoded.append("\n")
+            case "t": decoded.append(" ")
+            case "\"": decoded.append("\"")
+            case "/": decoded.append("/")
+            case "\\": decoded.append("\\")
+            case "u":
+                // `\u0026` is how an `&` inside a media URL arrives.
+                var digits = ""
+                for _ in 0..<4 { if let digit = iterator.next() { digits.append(digit) } }
+                if let code = UInt32(digits, radix: 16), let scalar = UnicodeScalar(code) {
+                    decoded.append(Character(scalar))
+                } else {
+                    decoded.append("\\u")
+                    decoded.append(digits)
+                }
+            default: decoded.append(escape)
+            }
+        }
+        return decoded.replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    /// The card's one-line label: the post's text with its line breaks flattened, so a
+    /// paragraph break does not turn a feed row into a two-storey card. The FULL text,
+    /// breaks and all, rides along in `bodyText` for the post viewer.
+    private static func pageTitle(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// How long the clip runs, from the media's own `duration_millis`.
+    ///
+    /// A pattern of its own, not the syndication one: there the key is quoted
+    /// (`"duration_millis":`), here the flight stream writes it bare
+    /// (`duration_millis:`), so reusing that pattern would match nothing and every X
+    /// video would report no length at all.
+    private static func pageDuration(for record: String, mediaURL: String) -> Int64 {
+        guard let at = record.range(of: mediaURL) else { return 0 }
+        let before = String(record[record.startIndex..<at.lowerBound])
+        let millis = matches(pageDurationPattern, in: before).last
+            .flatMap { group($0, 1, in: before) }
+            .flatMap { Int64($0) }
+        return (millis ?? 0) / 1000
+    }
+
+    /// The progressive MP4 of a post's FIRST video, highest bitrate first.
+    ///
+    /// A media object carries its variants once (`video_info`) and the post may hold
+    /// several media, so the variants are read from the first `video_info` up to the next
+    /// one: mixing two clips' variants would play the second clip under the first one's
+    /// poster. The list arrives ascending and holds an HLS playlist before the mp4s, and
+    /// `AVPlayer` can neither seek nor download the playlist the way this app needs, so
+    /// an mp4 is the only useful choice and the highest bitrate is the one a reader
+    /// expects to see.
+    private static func firstPageVideo(_ record: String) -> String? {
+        let infos = matches(pageVideoInfoMarker, in: record).map { $0.range.location }
+        guard let first = infos.first else { return nil }
+        let end = infos.dropFirst().first ?? record.utf16.count
+        let media = substring(record, first, max(0, end - first))
+        let variants = matches(pageVideoVariantPattern, in: media).compactMap { match -> (url: String, bitrate: Int)? in
+            guard let url = group(match, 2, in: media) else { return nil }
+            return (url, group(match, 1, in: media).flatMap { Int($0) } ?? 0)
+        }
+        if let best = variants.max(by: { $0.bitrate < $1.bitrate }) { return best.url }
+        return matches(pageVideoMP4Pattern, in: media).first.flatMap { group($0, 1, in: media) }
+    }
 }
