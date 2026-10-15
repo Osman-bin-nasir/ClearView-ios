@@ -16,7 +16,16 @@ struct MediaView: View {
     @State private var showHiddenChannels = false
     @State private var unavailable: String?
     @State private var pendingRemoval: DirectoryChannel?
-    @State private var filter = FeedFilter()
+    @State private var allFeedFilter = FeedFilter()
+    @State private var profileFilter = FeedFilter(date: .allTime, watchStatus: .all)
+
+    private var filter: FeedFilter {
+        get { selectedChannel == nil ? allFeedFilter : profileFilter }
+        nonmutating set {
+            if selectedChannel == nil { allFeedFilter = newValue }
+            else { profileFilter = newValue }
+        }
+    }
 
     /// The app's Protection model: the Block tab's rules, shared with the feed.
     ///
@@ -32,7 +41,7 @@ struct MediaView: View {
     private var currentChannel: DirectoryChannel? { library.state.channels.first { $0.id == selectedChannel } }
     private var continuing: [LibraryVideo] {
         protectedVideos((library.state.recent + library.state.feed).reduce(into: [LibraryVideo]()) { collected, video in
-            guard !collected.contains(where: { $0.id == video.id }), !video.isShort, video.live != true,
+            guard !collected.contains(where: { $0.id == video.id }), !video.isShortsEntry, !video.isPost, video.live != true,
                   (selectedChannel == nil || video.channelID == selectedChannel),
                   (selectedChannel != nil || !(library.state.hiddenChannelIDs ?? []).contains(video.channelID ?? "")),
                   !(library.state.hiddenVideoIDs ?? []).contains(video.id),
@@ -144,7 +153,7 @@ struct MediaView: View {
                         if !search.isEmpty { matchingChannels }
                     }
                     if library.loading { ProgressView().frame(maxWidth: .infinity) }
-                    if let error = library.error { CVErrorBanner(message: error) { Task { await library.refresh() } } }
+                    if let error = selectedChannel.flatMap({ library.channelErrors[$0] }) ?? (selectedChannel == nil ? library.error : nil) { CVErrorBanner(message: error) { Task { await library.refresh() } } }
                     if !continuing.isEmpty && !searchOpen && filter.content != .downloads {
                         sectionTitle("Continue Watching")
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -155,22 +164,30 @@ struct MediaView: View {
                             }
                         }
                     }
-                    if !videos.filter(\.isShort).isEmpty {
+                    if !videos.filter(\.isShortsEntry).isEmpty {
                         sectionTitle("Shorts")
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
-                                ForEach(videos.filter(\.isShort)) { video in
+                                ForEach(videos.filter(\.isShortsEntry)) { video in
                                     shortCard(video)
                                 }
                             }
                         }
                     }
-                    sectionTitle(filter.content == .downloads ? "Downloads" : "Videos")
+                    if filter.content == .downloads || videos.contains(where: { !$0.isShortsEntry && !$0.isPost }) {
+                        sectionTitle(filter.content == .downloads ? "Downloads" : "Videos")
+                    }
                     if filter.content == .downloads {
                         DownloadsSection()
                     } else {
                         LazyVStack(spacing: 12) {
-                            ForEach(videos.filter { !$0.isShort }) { video in videoRow(video) }
+                            ForEach(videos.filter { !$0.isShortsEntry && !$0.isPost }) { video in videoRow(video) }
+                        }
+                        if !videos.filter(\.isPost).isEmpty {
+                            sectionTitle("Posts")
+                            LazyVStack(spacing: 12) {
+                                ForEach(videos.filter(\.isPost)) { post in postCard(post) }
+                            }
                         }
                         if videos.isEmpty && !library.loading {
                             CVEmptyState(title: search.isEmpty ? "No videos to show" : "No results", message: emptyMessage, symbol: "play.rectangle")
@@ -207,6 +224,7 @@ struct MediaView: View {
                 .sheet(isPresented: $showHiddenChannels) { hiddenChannels }
                 .navigationDestination(item: $playingVideo) { video in
                     if let reference = YouTubeLink.parse(video.url) { MediaVideoPlayerView(video: video, reference: reference, library: library) }
+                    else { SocialMediaPlayerView(video: video, library: library) }
                 }
                 .alert("Not available yet", isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
                     Button("OK", role: .cancel) { unavailable = nil }
@@ -394,6 +412,28 @@ struct MediaView: View {
         }.background(Color.cvSurfaceVariant.opacity(0.6), in: RoundedRectangle(cornerRadius: 14)).clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
+    private func postCard(_ post: LibraryVideo) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                if let channel = library.state.channels.first(where: { $0.id == post.channelID }) {
+                    CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 32)
+                }
+                Text(post.channel).font(.subheadline.bold())
+                Spacer()
+                videoMenu(post)
+            }
+            if let thumbnail = post.thumbnail, !thumbnail.isEmpty {
+                AsyncImage(url: URL(string: thumbnail)) { image in image.resizable().scaledToFit() }
+                    placeholder: { Color.cvSurfaceContainer.frame(height: 160) }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            Text(post.bodyText?.isEmpty == false ? post.bodyText! : post.title)
+                .font(.body).textSelection(.enabled)
+            Button("Open post") { open(post) }.font(.subheadline.bold())
+        }
+        .padding(14).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
+    }
+
     private func videoMenu(_ video: LibraryVideo) -> some View {
         Menu {
                 Button(library.state.saved.contains(video) ? "Unsave video" : "Save video") { library.toggleSave(video) }
@@ -414,7 +454,7 @@ struct MediaView: View {
 
     private func open(_ video: LibraryVideo) {
         library.open(video)
-        if YouTubeLink.parse(video.url) != nil { playingVideo = video }
+        if YouTubeLink.parse(video.url) != nil || (!video.isYouTube && !video.isPost) { playingVideo = video }
         else { browser = BrowserDestination(video.url) }
     }
 
@@ -495,7 +535,7 @@ struct MediaDirectoryView: View {
                     else { invalidChannel = true }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: { Text("Paste a YouTube, Instagram, or X profile link. YouTube uploads appear in your feed; other profiles open directly.") }
+            } message: { Text("Paste a YouTube, Instagram, or X profile link. YouTube uploads appear in your feed; Instagram and X posts appear in their channel feeds.") }
             .alert("Check the channel link", isPresented: $invalidChannel) {
                 Button("OK", role: .cancel) {}
             } message: { Text("Use a channel profile link, such as https://www.youtube.com/@safinasociety.") }

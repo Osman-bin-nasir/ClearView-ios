@@ -50,6 +50,9 @@ struct MediaVideoPlayerView: View {
                     transport
                     if video.live != true {
                         downloadAudioButton
+                        if let downloadError = downloads.errors[video.id] {
+                            Text(downloadError).font(.footnote).foregroundStyle(Color.cvError)
+                        }
                         if let audioError {
                             Text(audioError).font(.footnote).foregroundStyle(Color.cvError)
                         }
@@ -167,11 +170,14 @@ struct MediaVideoPlayerView: View {
     private func startAudioMode() async {
         guard !audioPreparing else { return }
         audioError = nil
+        saveProgress(force: true)
+        let audioStart = player.position > 0 ? player.position : start
+        player.command("player.pauseVideo();")
         let controller = AudioPlaybackController.shared
 
         if let fileURL = downloads.fileURL(for: video.id) {
             controller.playLocal(videoId: video.id, title: video.title, channel: video.channel,
-                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: start)
+                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: audioStart)
             showAudioPlayer = true
             return
         }
@@ -181,7 +187,8 @@ struct MediaVideoPlayerView: View {
         do {
             let extracted = try await YouTubeAudioExtractor().extractAudio(videoId: video.id)
             controller.playStream(videoId: video.id, title: video.title, channel: video.channel,
-                                  artworkURL: video.thumbnail, streamURL: extracted.url, startAt: start)
+                                  artworkURL: video.thumbnail, streamURL: extracted.url, startAt: audioStart,
+                                  resolver: { try await YouTubeAudioExtractor().extractAudio(videoId: video.id).url })
             showAudioPlayer = true
         } catch {
             audioError = error.localizedDescription
@@ -192,7 +199,7 @@ struct MediaVideoPlayerView: View {
     /// not downloaded, resolving, downloading with progress, already saved.
     @ViewBuilder
     private var downloadAudioButton: some View {
-        let item = downloads.item(for: video.id)
+        let item = downloads.isDownloaded(video.id) ? downloads.item(for: video.id) : nil
         let update = downloads.progress[video.id]
         if let item {
             HStack {
@@ -212,7 +219,7 @@ struct MediaVideoPlayerView: View {
                     ProgressView(value: update.fraction)
                 }
                 HStack {
-                    Text(update.phase == .resolving ? "Finding the audio…" : "Downloading…")
+                    Text(update.phase == .resolving ? "Finding the audio…" : update.phase == .processing ? "Preparing audio file…" : "Downloading…")
                         .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                     Spacer(minLength: 8)
                     Button("Cancel", role: .destructive) { downloads.cancel(video.id) }.font(.caption.bold())

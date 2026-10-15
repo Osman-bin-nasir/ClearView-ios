@@ -1,134 +1,277 @@
 import SwiftUI
 import SharedKotlin
 
-/// One surah, ayah by ayah: the Arabic (IndoPak) above the English.
-///
-/// This is the reading surface, so it makes three layout choices worth stating:
-///
-///  - The Arabic is **scripture**, not a label: the bundled IndoPak Mushaf face
-///    ([QuranTypography]), centred, at the reader's own scale, with the ayah's
-///    number set *inside* the running text as the end-of-ayah ornament `۝`.
-///    That is how a printed mushaf numbers a verse, and it is how Android's
-///    `SurahReader` draws one (`ArabicVerse`) — a separate counter beside the
-///    text is the tell of a list of excerpts rather than a page of Quran.
-///  - The verses are a **continuous page**, not one card per ayah. No borders and
-///    no panel behind a verse: with no frames to separate them, the space
-///    between one ayah and the next is what groups each Arabic line with its own
-///    translation, which is also Android's rule (`verticalArrangement`).
-///  - The Arabic is a **separate paragraph** above the translation rather than
-///    inline beside it. Mixed-script inline runs are what force a reader to
-///    hunt for where the Arabic ends, and no line-height setting fixes that.
-///
-/// The Arabic is never the only thing on screen. The English is always present,
-/// so a missing or not-yet-cached Arabic edition degrades to a readable English
-/// reader instead of a blank page.
+/// A continuous Quran reading page with controls kept above the scripture.
 struct SurahReaderView: View {
     @Environment(\.dismiss) private var dismiss
-
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: SurahReaderModel
+    @State private var autoScroll = QuranReaderAutoScroll()
+    @State private var audio = VerseAudioPlayer()
+    @State private var fullScreen = false
+    @State private var showSearch = false
+    @State private var showTextSize = false
+    @State private var showScrollSpeeds = false
+    @State private var selectedAyah: Int32?
+    @State private var listeningAyah: Int32?
+    @State private var copiedAyah: Int32?
+    @FocusState private var searchFocused: Bool
 
     init(surah: SurahSummary, repository: QuranRepository, openAt: Int32? = nil) {
-        _model = State(
-            initialValue: SurahReaderModel(
-                surah: surah,
-                repository: repository,
-                openAt: openAt
-            )
-        )
+        _model = State(initialValue: SurahReaderModel(surah: surah, repository: repository, openAt: openAt))
     }
 
     var body: some View {
-        content
-            .background(Color.cvBackground)
-            // The surah's position and meaning in the title area, where the
-            // Android toolbar puts them too.
-            .navigationTitle(model.surah.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.visible, for: .navigationBar)
-            .navigationBarBackButtonHidden()
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: { Image(systemName: "chevron.left") }
-                        .accessibilityLabel("Back").accessibilityIdentifier("BackButton")
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Text size before the star, so the destructive-ish action
-                    // (unstarring) is not the control nearest the edge a thumb
-                    // reaches for.
-                    Button {
-                        model.decreaseArabicScale()
-                    } label: {
-                        Image(systemName: "textformat.size.smaller")
-                    }
-                    .disabled(!model.canDecreaseArabicScale)
-                    .accessibilityLabel("Smaller Arabic text")
-                    .accessibilityIdentifier("reader.text.smaller")
-
-                    Button {
-                        model.increaseArabicScale()
-                    } label: {
-                        Image(systemName: "textformat.size.larger")
-                    }
-                    .disabled(!model.canIncreaseArabicScale)
-                    .accessibilityLabel("Larger Arabic text")
-                    .accessibilityIdentifier("reader.text.larger")
-
-                    Button {
-                        model.toggleStar()
-                    } label: {
-                        Image(systemName: model.isStarred ? "star.fill" : "star")
-                            .foregroundStyle(model.isStarred ? Color.cvPrimary : Color.cvOnSurfaceVariant)
-                    }
-                    // Named for what it is, not for its icon: VoiceOver announcing
-                    // "star" cannot tell a reader whether tapping will add one or
-                    // remove the one they already have.
-                    .accessibilityLabel(model.isStarred ? "Remove surah star" : "Star this surah")
+        VStack(spacing: 0) {
+            readingControls
+            if showSearch { searchField }
+            if showTextSize { textSizeControl }
+            if showScrollSpeeds { scrollSpeedControl }
+            content
+        }
+        .background(Color.cvBackground)
+        .foregroundStyle(Color.cvOnSurface)
+        .tint(Color.cvPrimary)
+        .preferredColorScheme(.dark)
+        .navigationTitle(model.surah.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .toolbar(fullScreen ? .hidden : .visible, for: .navigationBar)
+        .toolbar(fullScreen ? .hidden : .visible, for: .tabBar)
+        .toolbarBackground(Color.cvBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .statusBarHidden(fullScreen)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { dismiss() } label: { Image(systemName: "chevron.left") }
+                    .accessibilityLabel("Back").accessibilityIdentifier("BackButton")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { model.toggleStar() } label: {
+                    Image(systemName: model.isStarred ? "star.fill" : "star")
+                }.accessibilityLabel(model.isStarred ? "Remove surah star" : "Star this surah")
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if listeningAyah != nil { audioControls }
+        }
+        .task { await model.load() }
+        .onAppear { model.refreshRestorePosition() }
+        .onDisappear {
+            autoScroll.pause()
+            audio.release()
+            listeningAyah = nil
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                autoScroll.pause()
+                audio.pause()
+                if audio.status == .loading {
+                    audio.release()
+                    listeningAyah = nil
                 }
             }
-            .task { await model.load() }
-            // On EVERY appearance, not just the first: SwiftUI may hand this screen
-            // back with its state intact when the same surah is opened again in the
-            // same session, and the reading position it read then is not the one the
-            // store holds now.
-            .onAppear { model.refreshRestorePosition() }
+        }
+        .onChange(of: model.search) { _, query in
+            autoScroll.pause()
+            selectedAyah = nil
+            if query.isEmpty { model.refreshRestorePosition() }
+        }
+    }
+
+    private var readingControls: some View {
+        HStack(spacing: 0) {
+            Button {
+                autoScroll.pause()
+                model.language.toggle()
+                selectedAyah = nil
+            } label: {
+                Text(model.language == .arabic ? "ع" : "A")
+                    .font(.system(size: 23, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .accessibilityLabel("Language mode")
+            .accessibilityValue(model.language.rawValue)
+            .accessibilityHint("Switch between Arabic and English")
+            .accessibilityIdentifier("reader.language")
+
+            control(fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                    label: fullScreen ? "Exit full screen" : "Full screen", id: "reader.fullScreen", active: fullScreen) {
+                autoScroll.pause()
+                fullScreen.toggle()
+            }
+            control("magnifyingglass", label: "Search verses", id: "reader.search", active: showSearch) {
+                autoScroll.pause()
+                showSearch.toggle()
+                if showSearch { showTextSize = false; showScrollSpeeds = false }
+                else { model.search = ""; searchFocused = false }
+            }
+            control("textformat.size", label: "Text size", id: "reader.textSize", active: showTextSize) {
+                autoScroll.pause()
+                searchFocused = false
+                showTextSize.toggle()
+                showScrollSpeeds = false
+            }
+            control(autoScroll.isRunning ? "pause.circle.fill" : "arrow.down.circle",
+                    label: autoScroll.isRunning ? "Pause auto-scroll" : "Auto-scroll",
+                    id: "reader.autoScroll", active: autoScroll.isRunning || showScrollSpeeds) {
+                searchFocused = false
+                if autoScroll.isRunning { autoScroll.pause() }
+                else { showScrollSpeeds.toggle(); showTextSize = false }
+            }
+            .accessibilityValue(autoScroll.isRunning ? "\(autoScroll.speed.rawValue), scrolling" : "Paused")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.cvPrimary)
+        .background(Color.cvSurfaceContainerLow)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.cvOutlineVariant.opacity(0.4)).frame(height: 0.5) }
+    }
+
+    private func control(_ symbol: String, label: String, id: String, active: Bool,
+                         action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 19))
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(active ? Color.cvPrimary.opacity(0.1) : .clear)
+        }.accessibilityLabel(label).accessibilityIdentifier(id)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(Color.cvOnSurfaceVariant)
+            TextField("Search Arabic, English, or ayah", text: $model.search)
+                .textFieldStyle(.plain).autocorrectionDisabled()
+                .focused($searchFocused).submitLabel(.search)
+                .accessibilityIdentifier("reader.search.field")
+                .onSubmit { searchFocused = false }
+            Button {
+                model.search = ""
+                showSearch = false
+                searchFocused = false
+            } label: { Image(systemName: "xmark.circle.fill").frame(width: 32, height: 44) }
+                .accessibilityLabel("Close verse search")
+        }
+        .font(.subheadline).padding(.horizontal, 16)
+        .background(Color.cvSurfaceContainer)
+        .onAppear { searchFocused = true }
+    }
+
+    private var textSizeControl: some View {
+        HStack(spacing: 12) {
+            Button { autoScroll.pause(); model.decreaseArabicScale() } label: {
+                Image(systemName: "textformat.size.smaller").frame(width: 32, height: 44)
+            }
+            .disabled(!model.canDecreaseArabicScale)
+            .accessibilityLabel("Smaller text").accessibilityIdentifier("reader.text.smaller")
+            Slider(value: Binding(get: { model.arabicTextScale }, set: {
+                autoScroll.pause()
+                model.setArabicTextScale($0)
+            }), in: QuranStore.arabicTextScaleRange, step: 0.05)
+                .accessibilityLabel("Reading text size")
+                .accessibilityValue("\(Int(model.arabicTextScale * 100)) percent")
+                .accessibilityIdentifier("reader.text.slider")
+            Button { autoScroll.pause(); model.increaseArabicScale() } label: {
+                Image(systemName: "textformat.size.larger").frame(width: 32, height: 44)
+            }
+            .disabled(!model.canIncreaseArabicScale)
+            .accessibilityLabel("Larger text").accessibilityIdentifier("reader.text.larger")
+        }.buttonStyle(.plain).padding(.horizontal, 16).background(Color.cvSurfaceContainer)
+    }
+
+    private var scrollSpeedControl: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                ForEach(QuranAutoScrollSpeed.allCases) { speed in
+                    Button {
+                        searchFocused = false
+                        autoScroll.speed = speed
+                        autoScroll.start()
+                    } label: {
+                        Text(speed.rawValue).font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .foregroundStyle(autoScroll.speed == speed ? Color.cvOnPrimary : Color.cvOnSurfaceVariant)
+                            .background(autoScroll.speed == speed ? Color.cvPrimary : Color.cvSurfaceContainerHigh, in: Capsule())
+                    }.accessibilityIdentifier("reader.speed.\(speed.rawValue)")
+                }
+            }.buttonStyle(.plain)
+            Text(autoScroll.isRunning ? "Tap anywhere on the page to pause" : "Choose a speed to start scrolling")
+                .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                .accessibilityIdentifier("reader.scroll.status")
+        }.padding(.horizontal, 16).padding(.vertical, 8).background(Color.cvSurfaceContainer)
     }
 
     @ViewBuilder
     private var content: some View {
         switch model.state {
         case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.cvBackground)
-
-        case .ready(let ayahs):
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .ready:
             ReaderContent(
-                surah: model.surah,
-                ayahs: ayahs,
-                basmala: model.basmala,
-                restoreTo: model.restorePosition,
-                arabicTextScale: model.arabicTextScale,
+                surah: model.surah, ayahs: model.filteredAyahs, basmala: model.basmala,
+                restoreTo: model.restorePosition, search: model.search,
+                arabicTextScale: model.arabicTextScale, language: model.language,
+                selectedAyah: selectedAyah, copiedAyah: copiedAyah, autoScroll: autoScroll,
                 isBookmarked: { model.isBookmarked(ayahNumber: $0) },
                 onToggleBookmark: { model.toggleBookmark(ayahNumber: $0) },
-                onTopAyahChanged: { model.rememberTopAyah($0) }
+                onTopAyahChanged: { model.rememberTopAyah($0) },
+                onSelect: {
+                    autoScroll.pause()
+                    searchFocused = false
+                    copiedAyah = nil
+                    selectedAyah = selectedAyah == $0 ? nil : $0
+                },
+                onCopy: {
+                    UIPasteboard.general.string = model.copyText(for: $0)
+                    copiedAyah = $0.id
+                },
+                onListen: { listen(to: $0) }
             )
-
         case .failed(let message):
-            VStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 32))
-                    .foregroundStyle(Color.cvError)
-                Text(message)
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Color.cvOnSurface)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 320)
-            }
-            .padding(32)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.cvBackground)
+            CVEmptyState(title: "Unable to load this surah", message: message, symbol: "exclamationmark.triangle")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func listen(to ayah: SurahReaderModel.Ayah) {
+        autoScroll.pause()
+        guard let url = VerseAudio.url(surahNumber: ayah.verse.surahNumber, ayahNumber: ayah.id) else { return }
+        listeningAyah = ayah.id
+        audio.start(url)
+    }
+
+    private var audioControls: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "headphones").foregroundStyle(Color.cvPrimary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ayah \(model.surah.number):\(listeningAyah ?? 1)").font(.subheadline.weight(.semibold))
+                Text(audio.status == .failed ? "Could not play recitation. Tap to retry." :
+                     audio.status == .loading ? "Loading recitation…" : "Mishary Alafasy")
+                    .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if audio.status == .loading { ProgressView() }
+            else {
+                Button {
+                    switch audio.status {
+                    case .playing: audio.pause()
+                    case .paused: audio.resume()
+                    case .ended: audio.restart()
+                    default:
+                        if let ayah = model.ayahs.first(where: { $0.id == listeningAyah }) { listen(to: ayah) }
+                    }
+                } label: {
+                    Image(systemName: audio.status == .playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(audio.status == .playing ? "Pause recitation" : "Play recitation")
+            }
+            Button {
+                audio.release()
+                listeningAyah = nil
+            } label: { Image(systemName: "xmark").frame(width: 36, height: 44) }
+                .accessibilityLabel("Stop recitation")
+        }
+        .buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 4)
+        .background(Color.cvSurfaceContainer)
+        .accessibilityIdentifier("reader.audio")
     }
 }
 
@@ -150,10 +293,20 @@ private struct ReaderContent: View {
     /// when the Arabic is not on the device.
     let basmala: String
     let restoreTo: Int32?
+    let search: String
     let arabicTextScale: Double
+    let language: QuranReadingMode
+    let selectedAyah: Int32?
+    let copiedAyah: Int32?
+    let autoScroll: QuranReaderAutoScroll
     let isBookmarked: (Int32) -> Bool
     let onToggleBookmark: (Int32) -> Void
     let onTopAyahChanged: (Int32) -> Void
+    let onSelect: (Int32) -> Void
+    let onCopy: (SurahReaderModel.Ayah) -> Void
+    let onListen: (SurahReaderModel.Ayah) -> Void
+
+    private var isSearching: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     /// The rows currently on screen, so the reader can tell where it is. The
     /// header is 0 and an ayah is its own number.
@@ -162,6 +315,7 @@ private struct ReaderContent: View {
     /// `scrollPosition(id:)`, which only works inside a `ScrollView`. It is a
     /// `List` here deliberately — see `body`.
     @State private var visibleRows: Set<Int32> = []
+    @State private var isRestoring = true
 
     /// The pending "the reader is at the top of the surah" write. Held so it can be
     /// withdrawn — by a scroll away from the top, or by the page closing.
@@ -197,7 +351,7 @@ private struct ReaderContent: View {
         // reason.
         ScrollViewReader { proxy in
             List {
-                SurahHeader(surah: surah, basmala: basmala, arabicTextScale: arabicTextScale)
+                SurahHeader(surah: surah, basmala: language == .arabic ? basmala : "", arabicTextScale: arabicTextScale)
                     // Item 0 is the header — the top of the surah, which the shared
                     // reading-position rule already reads as "save nothing".
                     .id(Int32(0))
@@ -205,12 +359,20 @@ private struct ReaderContent: View {
                     .onAppear { visibleRows.insert(0) }
                     .onDisappear { visibleRows.remove(0) }
 
+                if isSearching {
+                    Text(ayahs.isEmpty ? "No matching verses" : "\(ayahs.count) matching verses")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant).listRowModifiers()
+                }
                 ForEach(ayahs) { ayah in
                     AyahVerse(
                         ayah: ayah,
                         arabicTextScale: arabicTextScale,
                         isBookmarked: isBookmarked(ayah.verse.ayahNumber),
-                        onToggleBookmark: { onToggleBookmark(ayah.verse.ayahNumber) }
+                        onToggleBookmark: { onToggleBookmark(ayah.verse.ayahNumber) },
+                        language: language, isSelected: selectedAyah == ayah.id,
+                        isCopied: copiedAyah == ayah.id,
+                        onSelect: { onSelect(ayah.id) },
+                        onCopy: { onCopy(ayah) }, onListen: { onListen(ayah) }
                     )
                     .id(ayah.id)
                     .listRowModifiers(isVerse: true)
@@ -222,11 +384,37 @@ private struct ReaderContent: View {
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 0)
             .background(Color.cvBackground)
+            .accessibilityIdentifier("reader.verses")
+            .overlay {
+                QuranReaderScrollConnection(driver: autoScroll)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { autoScroll.pause() })
+            .onScrollPhaseChange { _, phase in
+                if phase == .tracking || phase == .interacting { autoScroll.pause() }
+            }
+            .onChange(of: search) { _, _ in
+                pendingClear?.cancel()
+                isRestoring = true
+            }
+            .onChange(of: language) { _, _ in
+                if let top = topRow {
+                    Task { @MainActor in
+                        await Task.yield()
+                        proxy.scrollTo(top, anchor: .top)
+                    }
+                }
+            }
             // Keyed by the target, so a position re-read on a later appearance
             // re-anchors the page instead of being ignored because this task had
             // already run once.
-            .task(id: restoreTo) {
-                guard let target = restoreTo else { return }
+            .task(id: "\(restoreTo ?? 0):\(search)") {
+                isRestoring = true
+                pendingClear?.cancel()
+                defer { isRestoring = false }
+                let target = isSearching ? ayahs.first?.id : (restoreTo ?? 0)
+                guard let target else { return }
                 // One turn of the runloop later than the rows exist, and repeated
                 // because the first request can still land before the list has laid
                 // its rows out. A reader who has scrolled in the meantime simply
@@ -235,6 +423,7 @@ private struct ReaderContent: View {
                     if attempt > 0 {
                         try? await Task.sleep(nanoseconds: 60_000_000)
                     }
+                    guard !Task.isCancelled else { return }
                     proxy.scrollTo(target, anchor: .top)
                 }
             }
@@ -253,7 +442,7 @@ private struct ReaderContent: View {
             // surah either way) and the pending write is cancelled if the reader
             // scrolls on or closes the page, which is exactly what a teardown is.
             .onChange(of: visibleRows) { _, rows in
-                guard let top = rows.filter({ $0 > 0 }).min() else { return }
+                guard !isSearching, !isRestoring, let top = rows.filter({ $0 > 0 }).min() else { return }
                 if top >= 2 {
                     pendingClear?.cancel()
                     onTopAyahChanged(top)
@@ -272,7 +461,7 @@ private struct ReaderContent: View {
                 isAtScrollTop = atTop
                 // Arriving at the top by scrolling is the reader saying "start me
                 // here next time", so it is recorded once the page settles.
-                if atTop, let top = visibleRows.filter({ $0 > 0 }).min() {
+                if !isSearching, !isRestoring, atTop, let top = visibleRows.filter({ $0 > 0 }).min() {
                     pendingClear?.cancel()
                     pendingClear = Task {
                         try? await Task.sleep(nanoseconds: 600_000_000)
@@ -281,7 +470,7 @@ private struct ReaderContent: View {
                     }
                 }
             }
-            .onDisappear { pendingClear?.cancel() }
+            .onDisappear { pendingClear?.cancel(); autoScroll.pause() }
         }
     }
 }
@@ -308,12 +497,7 @@ private extension View {
 
 /// The reader's own measurements, where no token exists for them.
 private enum ReaderMetrics {
-    /// Half the space that separates one verse from the next, applied above and
-    /// below each verse row — so two adjacent verses end up 26 points apart, which
-    /// is Android's `spacedBy(26.dp)`. Two verses must read as clearly further
-    /// apart than a verse is from its own translation (14 points), because that
-    /// difference is the only cue left grouping an ayah with its meaning now that
-    /// no card frames them.
+    /// Two neighboring rows keep 26 points between their reading text.
     static let verseGap: CGFloat = 13
 }
 
@@ -378,121 +562,72 @@ private struct SurahHeader: View {
     }
 }
 
-/// One ayah, as scripture and then as translation — Android's `ArabicVerse` and
-/// `EnglishVerse`, drawn as one block on a page.
-///
-/// There is no card here, no border and no second numbering. The verse's identity
-/// is the ornament `۝` at the end of its own Arabic, the way a mushaf prints it.
-///
-/// The bookmark stays a visible control rather than Android's tap-to-reveal: it is
-/// the thing a reader reaches for mid-verse, and a control that has to be
-/// discovered is the wrong shape for that. Nothing else is drawn beside the text.
+/// A verse keeps its Arabic ornament or English reference, with two tap actions.
 private struct AyahVerse: View {
-    /// The reader's chosen size for the Arabic alone. The English and the chrome
-    /// stay fixed: this scales the scripture, not the app — which is what the
-    /// Android reader does, and what a reader adjusting it is asking for.
-    ///
-    /// The same 30 points the home page sets a verse at, because it is the same
-    /// number Android uses in both places (`quranFontSize(30f)`).
-    private static let baseArabicSize = QuranTypography.readerBaseSize
-
     let ayah: SurahReaderModel.Ayah
     let arabicTextScale: Double
     let isBookmarked: Bool
     let onToggleBookmark: () -> Void
+    let language: QuranReadingMode
+    let isSelected: Bool
+    let isCopied: Bool
+    let onSelect: () -> Void
+    let onCopy: () -> Void
+    let onListen: () -> Void
 
-    /// The verse's own address, `2:12`.
-    ///
-    /// Carried as an accessibility identifier rather than printed on the page: on
-    /// a mushaf the number belongs *inside* the verse, and a Western reference
-    /// beside it is the counter this design removes. An element that answers to
-    /// `2:12` is still what lets a test name the verse it is looking at — and it is
-    /// the only stable handle a verse has, since its text is translated.
-    private var reference: String {
-        "\(ayah.verse.surahNumber):\(ayah.verse.ayahNumber)"
-    }
+    private var reference: String { "\(ayah.verse.surahNumber):\(ayah.id)" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // The Arabic, when the device has it. Without it the English is the
-            // whole verse, and the reference moves onto the English so a verse
-            // stays addressable in both cases — the reader is fully usable with no
-            // Arabic edition, and that path must not lose the verse's identity.
-            if ayah.arabic.isEmpty {
-                translation.accessibilityIdentifier(reference)
-            } else {
-                scripture.accessibilityIdentifier(reference)
-                translation
+        VStack(spacing: 14) {
+            Group {
+                if language == .arabic && !ayah.arabic.isEmpty { scripture }
+                else { translation }
             }
+            .accessibilityIdentifier(reference)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onSelect)
+            .accessibilityAction(named: Text("Show verse actions"), onSelect)
+            .accessibilityHint("Show Copy and Listen actions")
 
-            bookmarkRow
+            if isSelected {
+                HStack(spacing: 12) {
+                    Button(action: onCopy) { Label(isCopied ? "Copied" : "Copy", systemImage: "doc.on.doc") }
+                        .accessibilityIdentifier("reader.copy.\(reference)")
+                    Button(action: onListen) { Label("Listen", systemImage: "headphones") }
+                        .accessibilityIdentifier("reader.listen.\(reference)")
+                }
+                .font(.subheadline.weight(.medium)).buttonStyle(.borderless)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Color.cvPrimary.opacity(0.1), in: Capsule())
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button(isBookmarked ? "Remove bookmark" : "Bookmark verse", systemImage: "bookmark") {
+                onToggleBookmark()
+            }
+        }
     }
 
-    /// The ayah as scripture: the bundled IndoPak Mushaf face, centred, at the
-    /// reader's scale, with its number as the end-of-ayah ornament.
-    ///
-    /// Both runs state their own colour explicitly rather than inheriting one, so
-    /// the ornament's mute/ accent distinction cannot be lost to an outer
-    /// `foregroundStyle` — the ornament is the only thing telling a reader (or a
-    /// VoiceOver user reading the string out) where this verse ends.
     private var scripture: some View {
         (
-            Text(ayah.arabic + "  ")
-                .foregroundStyle(Color.cvOnSurface)
-            + Text(QuranTypography.ayahOrnament(ayah.verse.ayahNumber))
+            Text(ayah.arabic + "  ").foregroundStyle(Color.cvOnSurface)
+            + Text(QuranTypography.ayahOrnament(ayah.id))
                 .foregroundStyle(isBookmarked ? Color.cvPrimary : Color.cvOnSurfaceVariant)
-                .fontWeight(.semibold)
         )
-        .font(QuranTypography.font(baseSize: Self.baseArabicSize, scale: arabicTextScale))
-        // Line spacing scales with the type, so a larger size does not crowd the
-        // marks into the line below. Derived, never set by hand: the harakat only
-        // stay unclipped if the line grows with the glyphs.
-        .lineSpacing(QuranTypography.lineSpacing(baseSize: Self.baseArabicSize, scale: arabicTextScale))
+        .font(QuranTypography.font(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
+        .lineSpacing(QuranTypography.lineSpacing(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
         .multilineTextAlignment(.center)
-        // Right-to-left, explicitly. Leaving this to the system guessing from the
-        // Unicode bidi ranges works for a clean verse but flips odd leading marks
-        // the wrong way.
         .environment(\.layoutDirection, .rightToLeft)
         .frame(maxWidth: .infinity)
     }
 
-    /// The translation as a paragraph — Android's `EnglishVerse`, at the same size
-    /// and in the same serif.
-    ///
-    /// No `[N]` appended, though Android appends one: Android shows the Arabic or
-    /// the English and never both, so its number appears once per verse either way.
-    /// Here both are on screen together and the ornament above has already stated
-    /// the position, so appending it again would number one verse twice.
     private var translation: some View {
-        Text(ayah.verse.text)
-            .font(.system(size: 16, weight: .medium, design: .serif))
-            .lineSpacing(13)
+        Text(ayah.verse.text + "  [\(ayah.id)]")
+            .font(.system(size: 16 * arabicTextScale, weight: .medium, design: .serif))
+            .lineSpacing(10 * arabicTextScale)
             .foregroundStyle(Color.cvOnSurface)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// A button, not a swipe action: a bookmark is the thing a reader reaches for
-    /// mid-verse, and a gesture that needs discovering is the wrong shape for it.
-    /// The tap target is padded out to a full 44 points, which is the size the
-    /// system considers comfortable.
-    private var bookmarkRow: some View {
-        HStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Button(action: onToggleBookmark) {
-                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
-                    .font(.footnote)
-                    .foregroundStyle(isBookmarked ? Color.cvPrimary : Color.cvOnSurfaceVariant)
-                    .frame(width: 44, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                isBookmarked
-                    ? "Remove bookmark from ayah \(ayah.verse.ayahNumber)"
-                    : "Bookmark ayah \(ayah.verse.ayahNumber)"
-            )
-        }
     }
 }

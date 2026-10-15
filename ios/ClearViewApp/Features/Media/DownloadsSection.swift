@@ -43,8 +43,8 @@ struct DownloadsSection: View {
         return CVCard {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title(for: videoId)).font(.subheadline.weight(.semibold)).lineLimit(1)
-                if update.phase == .resolving {
-                    Text("Finding the audio…").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                if update.phase == .resolving || update.phase == .processing {
+                    Text(update.phase == .processing ? "Preparing audio file…" : "Finding the audio…").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                     ProgressView().progressViewStyle(.linear)
                 } else if update.fraction < 0 {
                     Text("Downloading…").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)

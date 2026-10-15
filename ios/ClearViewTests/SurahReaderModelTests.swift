@@ -211,6 +211,64 @@ final class SurahReaderModelTests: XCTestCase {
         XCTAssertEqual(ayahs.map(\.arabic), [""])
     }
 
+    func testReaderSearchMatchesBothLanguagesAndVerseReferencesWithoutLosingTheSurah() async throws {
+        try cache.write(.english, json: edition([(1, 1, "In the name of Allah"), (1, 2, "All praise")]))
+        try cache.write(.arabic, json: edition([(1, 1, "بِسْمِ اللَّهِ"), (1, 2, "الْحَمْدُ")]))
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 1, name: "Al-Faatiha", translation: "The Opening", ayahCount: 7),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher())
+        )
+        await model.load()
+        model.search = "بسم"
+        XCTAssertEqual(model.filteredAyahs.map(\.id), [1], "Arabic search ignores vocalization marks")
+        model.search = "PRAISE"
+        XCTAssertEqual(model.filteredAyahs.map(\.id), [2])
+        model.search = "1:2"
+        XCTAssertEqual(model.filteredAyahs.map(\.id), [2])
+        model.search = "missing"
+        XCTAssertTrue(model.filteredAyahs.isEmpty)
+        model.search = ""
+        XCTAssertEqual(model.filteredAyahs.map(\.id), [1, 2])
+        XCTAssertEqual(model.ayahs.count, 2)
+    }
+
+    func testCopyUsesTheSelectedLanguageAndIncludesTheVerseReference() async throws {
+        try cache.write(.english, json: edition([(1, 1, "In the name of Allah")]))
+        try cache.write(.arabic, json: edition([(1, 1, "بِسْمِ اللَّهِ")]))
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 1, name: "Al-Faatiha", translation: "The Opening", ayahCount: 7),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher())
+        )
+        await model.load()
+        let ayah = try XCTUnwrap(model.ayahs.first)
+        XCTAssertEqual(model.copyText(for: ayah), "بِسْمِ اللَّهِ\n— Al-Faatiha 1:1")
+        model.language.toggle()
+        XCTAssertEqual(model.copyText(for: ayah), "In the name of Allah\n— Al-Faatiha 1:1")
+        model.language.toggle()
+        let missingArabic = SurahReaderModel.Ayah(verse: ayah.verse, arabic: "")
+        XCTAssertEqual(model.copyText(for: missingArabic), "In the name of Allah\n— Al-Faatiha 1:1")
+    }
+
+    func testTextSizeSliderPersistsAndClampsItsValue() {
+        let suite = "ReaderSliderTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = QuranStore(defaults: defaults)
+        let model = SurahReaderModel(
+            surah: SurahSummary(number: 1, name: "Al-Faatiha", translation: "The Opening", ayahCount: 7),
+            repository: QuranRepository(cache: cache, fetcher: FakeFetcher()), store: store
+        )
+        model.setArabicTextScale(1.35)
+        XCTAssertEqual(model.arabicTextScale, 1.35, accuracy: 0.0001)
+        XCTAssertEqual(store.arabicTextScale, 1.35, accuracy: 0.0001)
+        model.setArabicTextScale(10)
+        XCTAssertEqual(model.arabicTextScale, QuranStore.arabicTextScaleRange.upperBound)
+        XCTAssertFalse(model.canIncreaseArabicScale)
+        model.setArabicTextScale(0)
+        XCTAssertEqual(model.arabicTextScale, QuranStore.arabicTextScaleRange.lowerBound)
+        XCTAssertFalse(model.canDecreaseArabicScale)
+    }
+
     // MARK: - Helpers
 
     private func edition(_ ayahs: [(surah: Int, ayah: Int, text: String)]) -> String {

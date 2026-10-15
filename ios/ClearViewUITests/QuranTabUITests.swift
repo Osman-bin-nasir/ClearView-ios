@@ -230,6 +230,7 @@ final class QuranTabUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app), "the surah list must appear")
 
+        app.buttons["reader.textSize"].tap()
         let larger = app.buttons["reader.text.larger"]
         let smaller = app.buttons["reader.text.smaller"]
         XCTAssertTrue(larger.waitForExistence(timeout: 30), "the reader must offer a larger text size")
@@ -239,10 +240,9 @@ final class QuranTabUITests: XCTestCase {
         XCTAssertTrue(larger.isEnabled)
         XCTAssertTrue(smaller.isEnabled)
 
-        // Grow it until the control gives up. From 1.0 in steps of 0.2 the ceiling
-        // is 2.0, so this is a handful of taps; the loop is generous and the
-        // assertion is on the *wait*, not on the count.
-        for _ in 0..<8 { larger.tap() }
+        let slider = app.sliders["reader.text.slider"]
+        XCTAssertTrue(slider.exists)
+        slider.adjust(toNormalizedSliderPosition: 1)
         expectation(for: NSPredicate(format: "isEnabled == false"), evaluatedWith: larger, handler: nil)
         waitForExpectations(timeout: 20)
         XCTAssertTrue(smaller.isEnabled, "with the text at its largest, smaller must still work")
@@ -323,6 +323,61 @@ final class QuranTabUITests: XCTestCase {
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Refreshes automatically every'")).firstMatch.exists,
             "the Quran leg must state the cadence"
         )
+    }
+
+    func testReaderLanguageSearchFullScreenAndVerseActions() {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+        XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app))
+
+        let language = app.buttons["reader.language"]
+        XCTAssertEqual(language.value as? String, "Arabic")
+        language.tap()
+        XCTAssertEqual(language.value as? String, "English")
+
+        app.staticTexts["1:1"].tap()
+        XCTAssertTrue(app.buttons["reader.copy.1:1"].waitForExistence(timeout: 5))
+        app.buttons["reader.copy.1:1"].tap()
+        XCTAssertTrue(app.buttons["Copied"].exists)
+        app.buttons["reader.listen.1:1"].tap()
+        XCTAssertTrue(app.buttons["Stop recitation"].waitForExistence(timeout: 5))
+        app.buttons["Stop recitation"].tap()
+
+        app.buttons["reader.fullScreen"].tap()
+        XCTAssertFalse(app.navigationBars["Al-Faatiha"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        app.buttons["reader.fullScreen"].tap()
+        XCTAssertTrue(app.navigationBars["Al-Faatiha"].waitForExistence(timeout: 5))
+
+        app.buttons["reader.search"].tap()
+        let search = app.textFields["reader.search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.typeText("1:7")
+        XCTAssertTrue(app.staticTexts["1:7"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["1:1"].exists)
+        app.buttons["Close verse search"].tap()
+        XCTAssertTrue(app.staticTexts["1:1"].waitForExistence(timeout: 5))
+    }
+
+    func testReadingAreaTouchPausesAutoScroll() {
+        let app = XCUIApplication()
+        app.launchArguments = Self.cleanLaunch
+        app.launch()
+        XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app))
+        app.buttons["reader.autoScroll"].tap()
+        for speed in ["Slow", "Medium", "Fast"] {
+            let button = app.buttons["reader.speed.\(speed)"]
+            XCTAssertTrue(button.exists)
+            button.tap()
+            let autoScroll = app.buttons["reader.autoScroll"]
+            expectation(for: NSPredicate(format: "value == %@", "\(speed), scrolling"), evaluatedWith: autoScroll)
+            waitForExpectations(timeout: 5)
+            // The left edge is empty reading space, rather than a verse action.
+            app.collectionViews["reader.verses"].coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).tap()
+            expectation(for: NSPredicate(format: "value == 'Paused'"), evaluatedWith: autoScroll)
+            waitForExpectations(timeout: 5)
+        }
     }
 
     // MARK: - Helpers

@@ -1,7 +1,7 @@
 import Foundation
 
 /// What a profile fetch produced.
-struct MediaFeedResult: Equatable {
+struct MediaFeedResult: Equatable, Sendable {
     var username: String
     var displayName: String?
     var avatarURL: String?
@@ -193,11 +193,16 @@ enum InstagramProfileEmbedParser {
         index: Int
     ) -> MediaVideo? {
         guard let shortcode = (media["shortcode"] as? String), !shortcode.isEmpty else { return nil }
-        let isVideo = (media["is_video"] as? Bool) ?? false
         let typename = (media["__typename"] as? String) ?? ""
-        let type: InstagramMediaType = typename.caseInsensitiveCompare("GraphSidecar") == .orderedSame
-            ? .carousel
-            : (isVideo ? .reel : .image)
+        let isVideo = (media["is_video"] as? Bool) ?? (typename.lowercased().contains("video"))
+        let product = (media["product_type"] as? String)?.lowercased()
+        let duration = (media["video_duration"] as? NSNumber)?.doubleValue ?? 0
+        let type: InstagramMediaType
+        if typename.lowercased().contains("sidecar") || (media["media_type"] as? Int) == 8 { type = .carousel }
+        else if !isVideo { type = .image }
+        else if product == "clips" || (media["is_reel_media"] as? Bool) == true { type = .reel }
+        else if product == "igtv" || product == "feed" || duration > 180 { type = .video }
+        else { type = .reel }
 
         // The embed omits `video_url`; playback resolves the stream from the
         // permalink on demand. The poster is the post's own still.
@@ -222,9 +227,9 @@ enum InstagramProfileEmbedParser {
             publishedAtEpochMillis: published,
             thumbnailUrl: thumbnailURL(shortcode: shortcode, poster: poster),
             viewCount: likes,
-            isShort: isVideo,
+            isShort: type == .reel,
             isLive: false,
-            durationSeconds: 0,
+            durationSeconds: Int64(max(0, duration.rounded(.up))),
             platform: .instagram,
             instagramType: type,
             mediaUrl: (media["video_url"] as? String).flatMap { $0.isEmpty ? nil : $0 },

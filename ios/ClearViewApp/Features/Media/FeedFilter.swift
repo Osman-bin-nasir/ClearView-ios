@@ -43,7 +43,7 @@ enum FeedContentFilter: String, CaseIterable {
         case .live: return "Live"
         case .downloads: return "Downloads"
         case .reels: return "Reels"
-        case .imagePosts: return "Image Posts"
+        case .imagePosts: return "Posts"
         }
     }
 }
@@ -247,29 +247,22 @@ enum FeedFilters {
             .map(\.element)
     }
 
-    /// Platform **and** content type. The two are checked together because most content
-    /// types are platform-specific: "Shorts" means YouTube Shorts, not an Instagram Reel
-    /// that happens to be short.
+    /// Platform and section share the same routing rules as the feed UI.
     private static func matchesContent(_ video: MediaVideo, filter: FeedFilter) -> Bool {
         if let platform = filter.platform.platform, video.platform != platform { return false }
         switch filter.content {
         case .all:
             return true
         case .videos:
-            return !video.isShort && video.platform == .youTube
+            return !video.isShortsEntry && !video.isPost
         case .shorts:
-            return video.isShort && video.platform == .youTube
+            return video.isShortsEntry
         case .live:
             return video.isLive
         case .reels:
-            // Reels are Instagram *video* items; posts are everything else Instagram —
-            // photo posts and carousels, even one with a video slide. Both go through
-            // the same rule the feed itself uses rather than re-deriving it from
-            // `isShort`, which the parsers set for any video-ish post and which is what
-            // let posts appear under Reels.
-            return video.isInstagramVideo
+            return video.isInstagram && video.isShortsEntry
         case .imagePosts:
-            return video.isInstagramImage
+            return video.isPost
         case .downloads:
             // Handled by the screen, which swaps the feed body for the Downloads
             // section; a Downloads *filter* matches nothing in the feed list itself.
@@ -423,9 +416,9 @@ enum FeedFilters {
         case .youTube:
             return [.all, .videos, .shorts, .downloads]
         case .instagram:
-            return [.all, .reels, .imagePosts]
+            return [.all, .shorts, .videos, .imagePosts, .downloads]
         case .x:
-            return [.all]
+            return [.all, .videos, .imagePosts, .downloads]
         case .all:
             return FeedContentFilter.allCases.filter { $0 != .live }
         }
@@ -434,6 +427,11 @@ enum FeedFilters {
     /// The filter with any content type the current platform does not offer reset to
     /// `all`.
     static func normalizedForPlatform(_ filter: FeedFilter) -> FeedFilter {
+        if filter.platform == .instagram, filter.content == .reels {
+            var normalized = filter
+            normalized.content = .shorts
+            return normalized
+        }
         guard !contentOptions(for: filter.platform).contains(filter.content) else { return filter }
         var normalized = filter
         normalized.content = .all

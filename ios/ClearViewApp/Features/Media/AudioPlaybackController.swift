@@ -92,6 +92,9 @@ final class AudioPlaybackController {
     private var sleepDeadline: Date?
     /// The last position reported, used to resume after a stream retry.
     private var lastPosition: Double = 0
+    @ObservationIgnored private var streamResolver: (() async throws -> URL)?
+    @ObservationIgnored private var resolveTask: Task<Void, Never>?
+    private(set) var isResolving = false
 
     private init() {
         speed = UserDefaults.standard.object(forKey: Self.speedDefaultsKey) as? Double ?? 1
@@ -104,26 +107,36 @@ final class AudioPlaybackController {
 
     /// Plays a downloaded file.
     func playLocal(videoId: String, title: String, channel: String, artworkURL: String?, fileURL: URL, startAt: Double = 0) {
+        resolveTask?.cancel()
+        resolveTask = nil
+        isResolving = false
+        streamResolver = nil
         load(Track(videoId: videoId, title: title, channel: channel, artworkURL: artworkURL,
                    isStream: false, localFileURL: fileURL, streamURL: nil), startAt: startAt)
     }
 
     /// Plays the audio-only stream of a video that was not downloaded.
-    func playStream(videoId: String, title: String, channel: String, artworkURL: String?, streamURL: URL, startAt: Double = 0) {
+    func playStream(videoId: String, title: String, channel: String, artworkURL: String?, streamURL: URL, startAt: Double = 0,
+                    resolver: (() async throws -> URL)? = nil) {
+        resolveTask?.cancel()
+        resolveTask = nil
+        isResolving = false
+        streamResolver = resolver
         load(Track(videoId: videoId, title: title, channel: channel, artworkURL: artworkURL,
                    isStream: true, localFileURL: nil, streamURL: streamURL), startAt: startAt)
     }
 
-    private func load(_ newTrack: Track, startAt: Double) {
+    private func load(_ newTrack: Track, startAt: Double, resetSleepTimer: Bool = true) {
+        let safeStart = startAt.isFinite ? max(0, startAt) : 0
         teardownPlayer()
         track = newTrack
         error = nil
-        position = max(0, startAt)
+        position = safeStart
         duration = 0
-        lastPosition = max(0, startAt)
+        lastPosition = safeStart
         // A new source starts a new session: the previous track's sleep timer
         // does not belong to this one.
-        clearSleepTimer()
+        if resetSleepTimer { clearSleepTimer() }
         activateSession()
 
         guard let url = newTrack.localFileURL ?? newTrack.streamURL else {
@@ -139,16 +152,19 @@ final class AudioPlaybackController {
         self.player = player
         isBuffering = newTrack.isStream
 
+        var didPrepare = false
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.item === item else { return }
                 switch item.status {
                 case .readyToPlay:
+                    guard !didPrepare else { return }
+                    didPrepare = true
                     self.duration = item.duration.seconds.isFinite ? max(0, item.duration.seconds) : 0
                     self.isBuffering = false
                     MediaLog.audio.info("load \(newTrack.videoId, privacy: .public): readyToPlay duration=\(self.duration, privacy: .public)s")
-                    if startAt > 0 {
-                        self.player?.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
+                    if safeStart > 0 {
+                        self.player?.seek(to: CMTime(seconds: safeStart, preferredTimescale: 600))
                     }
                     self.start()
                 case .failed:
@@ -167,10 +183,41 @@ final class AudioPlaybackController {
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.finishPlayback() }
+            Task { @MainActor in
+                guard let self, self.item === item else { return }
+                self.finishPlayback()
+            }
         }
 
         start()
+    }
+
+    /// Refresh an expired stream, retaining the listening position and timer.
+    func retry() {
+        guard let track, !isResolving else { return }
+        guard track.isStream, let resolver = streamResolver else {
+            load(track, startAt: position, resetSleepTimer: false)
+            return
+        }
+        let resumeAt = position
+        isResolving = true
+        resolveTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await resolver()
+                try Task.checkCancellation()
+                guard self.track?.videoId == track.videoId else { return }
+                self.load(Track(videoId: track.videoId, title: track.title, channel: track.channel,
+                                artworkURL: track.artworkURL, isStream: true, localFileURL: nil, streamURL: url),
+                          startAt: resumeAt, resetSleepTimer: false)
+            } catch is CancellationError { return }
+            catch {
+                guard !Task.isCancelled else { return }
+                self.error = error.localizedDescription
+            }
+            self.isResolving = false
+            self.resolveTask = nil
+        }
     }
 
     /// Resume (or begin) playback of the loaded track.
@@ -199,6 +246,10 @@ final class AudioPlaybackController {
 
     /// Stops and unloads; nothing is left to resume.
     func stop() {
+        resolveTask?.cancel()
+        resolveTask = nil
+        isResolving = false
+        streamResolver = nil
         persistProgress(completed: false)
         teardownPlayer()
         track = nil

@@ -56,12 +56,13 @@ final class MediaFeedFilterTests: XCTestCase {
         )
     }
 
-    /// A Short is a YouTube concept: an Instagram Reel is an ordinary video here, even
-    /// when an older cache marked it `isShort`.
-    func testShortsAreYouTubeOnly() {
+    /// Reels share the Shorts surface, including older cached entries.
+    func testShortsIncludeInstagramReels() {
         XCTAssertTrue(video("a", isShort: true).isShortsEntry)
-        XCTAssertFalse(video("b", platform: .instagram, isShort: true, instagramType: .reel).isShortsEntry)
+        XCTAssertTrue(video("b", platform: .instagram, isShort: true, instagramType: .reel).isShortsEntry)
         XCTAssertFalse(video("c").isShortsEntry)
+        XCTAssertTrue(video("legacy", platform: .instagram, isShort: true).isShortsEntry)
+        XCTAssertFalse(video("long", platform: .instagram, isShort: true, instagramType: .video).isShortsEntry)
     }
 
     /// The Instagram type decides both ways, and only a missing type falls back to the
@@ -221,10 +222,10 @@ final class MediaFeedFilterTests: XCTestCase {
         // "Videos" is "YouTube and not a Short", which is Android's rule and therefore
         // includes a live broadcast — the Live preset is the way to single those out.
         XCTAssertEqual(ids(.videos), ["live", "long"])
-        XCTAssertEqual(ids(.shorts), ["short"])
+        XCTAssertEqual(ids(.shorts), ["reel", "short"])
         XCTAssertEqual(ids(.live), ["live"])
         XCTAssertEqual(ids(.reels), ["reel"], "a Reel is a video, a carousel or photo is not")
-        XCTAssertEqual(ids(.imagePosts), ["ig-image"])
+        XCTAssertEqual(ids(.imagePosts), ["ig-image", "tweet"])
         XCTAssertEqual(ids(.downloads), [], "Downloads is handled by the screen, not the list")
 
         XCTAssertEqual(ids(.all, .instagram), ["ig-image", "reel"])
@@ -397,8 +398,8 @@ final class MediaFeedFilterTests: XCTestCase {
     /// for "Reels is selected but there is no chip for it and the feed is empty".
     func testContentOptionsAndNormalisation() {
         XCTAssertEqual(FeedFilters.contentOptions(for: .youTube), [.all, .videos, .shorts, .downloads])
-        XCTAssertEqual(FeedFilters.contentOptions(for: .instagram), [.all, .reels, .imagePosts])
-        XCTAssertEqual(FeedFilters.contentOptions(for: .x), [.all])
+        XCTAssertEqual(FeedFilters.contentOptions(for: .instagram), [.all, .shorts, .videos, .imagePosts, .downloads])
+        XCTAssertEqual(FeedFilters.contentOptions(for: .x), [.all, .videos, .imagePosts, .downloads])
         XCTAssertFalse(
             FeedFilters.contentOptions(for: .all).contains(.live),
             "Live is not offered from this sheet"
@@ -408,7 +409,7 @@ final class MediaFeedFilterTests: XCTestCase {
         XCTAssertEqual(FeedFilters.normalizedForPlatform(reelsOnYouTube).content, .all)
 
         let reelsOnInstagram = FeedFilter(platform: .instagram, content: .reels)
-        XCTAssertEqual(FeedFilters.normalizedForPlatform(reelsOnInstagram).content, .reels)
+        XCTAssertEqual(FeedFilters.normalizedForPlatform(reelsOnInstagram).content, .shorts)
     }
 
     /// The default filter reports itself as inactive, and any change from the defaults

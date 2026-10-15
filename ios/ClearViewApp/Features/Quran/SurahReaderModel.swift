@@ -30,6 +30,30 @@ final class SurahReaderModel {
         case failed(String)
     }
 
+    var language: QuranReadingMode = .arabic
+    var search = ""
+
+    var ayahs: [Ayah] {
+        guard case .ready(let ayahs) = state else { return [] }
+        return ayahs
+    }
+
+    var filteredAyahs: [Ayah] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return ayahs }
+        return ayahs.filter {
+            $0.arabic.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                || $0.verse.text.localizedStandardContains(query)
+                || String($0.id) == query
+                || "\($0.verse.surahNumber):\($0.id)" == query
+        }
+    }
+
+    func copyText(for ayah: Ayah) -> String {
+        let text = language == .arabic && !ayah.arabic.isEmpty ? ayah.arabic : ayah.verse.text
+        return "\(text)\n— \(surah.name) \(ayah.verse.surahNumber):\(ayah.id)"
+    }
+
     let surah: SurahSummary
 
     private(set) var state: State = .loading
@@ -200,7 +224,7 @@ final class SurahReaderModel {
     /// The store clamps to the allowed range, and this re-reads it rather than
     /// assuming the write was taken as given — so the two can never disagree about
     /// the size on screen.
-    private func setArabicTextScale(_ scale: Double) {
+    func setArabicTextScale(_ scale: Double) {
         store.arabicTextScale = scale
         arabicTextScale = store.arabicTextScale
     }

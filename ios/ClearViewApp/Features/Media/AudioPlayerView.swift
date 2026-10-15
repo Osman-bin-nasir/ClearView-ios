@@ -30,6 +30,9 @@ struct AudioPlayerView: View {
                 }
                 if let error = controller.error {
                     Text(error).font(.footnote).foregroundStyle(Color.cvError).multilineTextAlignment(.center)
+                    Button(controller.isResolving ? "Preparing audio…" : "Retry audio") { controller.retry() }
+                        .disabled(controller.isResolving)
+                        .accessibilityIdentifier("audio.retry")
                 }
                 timeline
                 transport
