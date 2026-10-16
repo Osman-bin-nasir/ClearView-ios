@@ -6,11 +6,22 @@ struct ClearViewApp: App {
 
     init() {
         Self.resetPreferencesIfAsked()
+        // One shared disk budget for every image and cacheable GET in the app. Installed here
+        // because `URLCache.shared` is created lazily on first use, and after that its size is
+        // fixed: whoever asks first decides for the whole process.
+        RemoteImageCache.installSharedCache()
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
+                // The saved tab's pictures, fetched back into the disk cache once per launch —
+                // catching the few an eviction took — and the cache trimmed. Both are disk work
+                // behind the first screen rather than in front of it.
+                .task {
+                    await GoodPostRepository().warmSavedImages()
+                    RemoteImageCache.shared.trimIfNeeded()
+                }
         }
     }
 
@@ -43,6 +54,13 @@ struct ClearViewApp: App {
         if let fixture = ProcessInfo.processInfo.environment["CLEARVIEW_MEDIA_FIXTURE"],
            let data = fixture.data(using: .utf8), (try? JSONDecoder().decode(MediaLibraryState.self, from: data)) != nil {
             UserDefaults.standard.set(data, forKey: "media.library.v1")
+        }
+        // Good Post's saved text, seeded through the app's own cache and codec: a test of what
+        // the tab shows when the server cannot be reached starts from updates this device
+        // already holds. See `GoodPostFixture`.
+        if let fixture = ProcessInfo.processInfo.environment["CLEARVIEW_GOODPOST_FIXTURE"],
+           let data = fixture.data(using: .utf8) {
+            GoodPostFixture.seed(from: data)
         }
     }
 

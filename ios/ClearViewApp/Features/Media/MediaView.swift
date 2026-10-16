@@ -365,9 +365,9 @@ struct MediaView: View {
 
     private func thumbnail(_ video: LibraryVideo, showDuration: Bool = true) -> some View {
         GeometryReader { geometry in
-            AsyncImage(url: video.thumbnail.flatMap(URL.init(string:))) { image in
-                image.resizable().scaledToFill()
-            } placeholder: { ZStack { Color.cvSurfaceContainer; Image(systemName: "play.rectangle").foregroundStyle(Color.cvOnSurfaceVariant) } }
+            RemoteImage(url: video.thumbnail, placeholder: AnyView(
+                ZStack { Color.cvSurfaceContainer; Image(systemName: "play.rectangle").foregroundStyle(Color.cvOnSurfaceVariant) }
+            ))
                 .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 .overlay(alignment: .bottomTrailing) {
                     if let duration = video.durationSeconds, duration > 0, showDuration {
@@ -464,8 +464,8 @@ struct MediaView: View {
                 videoMenu(post)
             }
             if let thumbnail = post.thumbnail, !thumbnail.isEmpty {
-                AsyncImage(url: URL(string: thumbnail)) { image in image.resizable().scaledToFit() }
-                    placeholder: { Color.cvSurfaceContainer.frame(height: 160) }
+                RemoteImage(url: thumbnail, contentMode: .fit, maxPixelSize: 1_200,
+                            placeholder: AnyView(Color.cvSurfaceContainer.frame(height: 160)))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             // No "Open post" row: a post is read here, in the app, and the row's

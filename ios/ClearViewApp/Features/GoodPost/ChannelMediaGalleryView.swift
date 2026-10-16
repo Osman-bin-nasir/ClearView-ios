@@ -29,7 +29,10 @@ final class VideoPosterCache {
         inFlight.insert(key)
         defer { inFlight.remove(key) }
 
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        // The stored copy when the reader has watched this clip: extracting a frame from the
+        // file on the device costs nothing, where the remote URL costs the whole download again.
+        let source = GoodPostVideoCache.shared.playbackURL(for: url.absoluteString) ?? url
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source))
         // A clip shot in portrait carries a rotation, and a poster that ignores it is sideways.
         generator.appliesPreferredTrackTransform = true
         // Twice the tile, so it is sharp on a 3x screen without decoding a full frame to fill
@@ -127,12 +130,8 @@ private struct ChannelMediaCell: View {
                 Image(systemName: "play.fill")
                     .font(.caption).foregroundStyle(.white)
                     .frame(width: 26, height: 26).background(.black.opacity(0.45), in: Circle())
-            } else if let raw = item.url, let url = URL(string: raw) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    ProgressView()
-                }
+            } else if let raw = item.url {
+                RemoteImage(url: raw, maxPixelSize: 720, placeholder: AnyView(ProgressView()))
             }
         }
         .frame(height: 104)

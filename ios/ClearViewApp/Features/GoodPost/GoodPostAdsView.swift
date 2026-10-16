@@ -164,12 +164,8 @@ private struct AdRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if ad.isImage, let raw = ad.imageUrl, let url = URL(string: raw) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.cvSurfaceContainer
-                }
+            if ad.isImage, let raw = ad.imageUrl {
+                RemoteImage(url: raw, placeholder: AnyView(Color.cvSurfaceContainer))
                 .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {

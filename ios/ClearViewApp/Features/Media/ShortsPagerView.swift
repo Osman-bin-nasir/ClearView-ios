@@ -144,11 +144,7 @@ private struct ShortPage: View {
         ZStack {
             Color.cvSurfaceContainer
             if let thumbnail = short.thumbnail, !thumbnail.isEmpty {
-                AsyncImage(url: URL(string: thumbnail)) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    ProgressView()
-                }
+                RemoteImage(url: thumbnail, placeholder: AnyView(ProgressView()))
             } else {
                 Image(systemName: "play.rectangle").font(.system(size: 40))
                     .foregroundStyle(Color.cvOnSurfaceVariant)

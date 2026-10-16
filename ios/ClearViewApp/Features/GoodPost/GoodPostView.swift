@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import Combine
 
 struct GoodPostView: View {
     @State private var model = GoodPostScreenModel()
@@ -544,7 +545,10 @@ struct ChannelFeedView: View {
                 if let raw = media.url, let url = URL(string: raw) {
                     if media.isImage {
                         Button { browser = BrowserDestination(raw) } label: {
-                            AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().frame(height: 160) }
+                            // Fetched once, on disk after that: a feed read offline draws its
+                            // pictures instead of a spinner per post.
+                            RemoteImage(url: raw, contentMode: .fit, maxPixelSize: 1_200,
+                                        placeholder: AnyView(ProgressView().frame(height: 160)))
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         }.buttonStyle(.plain).accessibilityLabel("Open image")
                     } else if media.isVideo {
@@ -667,13 +671,45 @@ enum GoodPostPalette {
     static let timestamp = Color(red: 164 / 255.0, green: 184 / 255.0, blue: 152 / 255.0)
 }
 
-struct InlinePostVideo: View {
+/// A Good Post clip, played from this device's stored copy when there is one.
+///
+/// Two decisions live here, and both are about data rather than about playback:
+///
+///  * The player is handed the **stored file** when the clip's bytes are already on this
+///    device, and the remote signed URL only when they are not. That is what makes the second
+///    open of a clip cost nothing — and it survives the URL being re-signed, because the bytes
+///    are keyed by the object and not by the credential.
+///  * The bytes are stored when playback **starts** (`timeControlStatus`), not when the post
+///    scrolls into view: a download for a clip nobody watched would be spending the reader's
+///    data on a guess. Android's player fills its cache from the same moment.
+struct GoodPostVideoPlayer: View {
     let url: URL
     @State private var player: AVPlayer?
 
     var body: some View {
-        VideoPlayer(player: player).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 12))
-            .onAppear { player = AVPlayer(url: url) }
+        VideoPlayer(player: player)
+            .onAppear {
+                player = AVPlayer(url: GoodPostVideoCache.shared.playbackURL(for: url.absoluteString) ?? url)
+            }
             .onDisappear { player?.pause(); player = nil }
+            .onReceive(status) { status in
+                guard status == .playing else { return }
+                GoodPostVideoCache.shared.prepare(url.absoluteString)
+            }
+    }
+
+    /// Playback starting is the signal to store the bytes. A player that has not been created
+    /// yet has nothing to report, hence the empty publisher rather than a rate check.
+    private var status: AnyPublisher<AVPlayer.TimeControlStatus, Never> {
+        guard let player else { return Empty().eraseToAnyPublisher() }
+        return player.publisher(for: \.timeControlStatus).eraseToAnyPublisher()
+    }
+}
+
+struct InlinePostVideo: View {
+    let url: URL
+
+    var body: some View {
+        GoodPostVideoPlayer(url: url).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

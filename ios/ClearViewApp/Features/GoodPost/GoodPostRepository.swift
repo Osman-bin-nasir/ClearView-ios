@@ -103,6 +103,64 @@ actor GoodPostRepository {
     /// The cached external channel directory, for the first frame.
     func cachedDirectory() -> CachedDirectory? { cache.loadDirectory() }
 
+    // MARK: - Offline media
+
+    /// The pictures of everything already saved, back into the image cache.
+    ///
+    /// Text is the easy half of offline and was already handled by the cache; PICTURES are the
+    /// half that makes a saved channel look saved rather than broken. The disk cache holds them
+    /// across launches, so this is mostly a second pass over bytes that are already there — it is
+    /// what re-fetches the few an eviction or the seven-day TTL took away, and it runs while the
+    /// reader is doing something else.
+    ///
+    /// The list is what this device can actually read without the network: the saved channels, the
+    /// followed channels, the saved directory and the posts of the channels it follows. Bounded by
+    /// `limit`, because a launch is not the moment to spend a hundred requests.
+    func warmSavedImages(limit: Int = 60) async {
+        var urls: [String] = []
+        urls += (cachedFollowedChannels()?.channels ?? []).compactMap(\.iconUrl)
+        urls += (cachedChannels()?.channels ?? []).compactMap(\.iconUrl)
+        urls += (cachedDirectory()?.snapshot.allChannels ?? []).compactMap(\.iconUrl)
+        for channel in cachedFollowedChannels()?.channels ?? [] {
+            urls += (cachedPosts(channelId: channel.id)?.posts ?? []).flatMap { $0.media.compactMap(\.url) }
+        }
+        await RemoteImageCache.shared.prefetch(urls, limit: limit)
+    }
+
+    /// One pass that brings the saved tab up to date, and is meant for the moment a notification
+    /// arrives. Returns how many channels it read.
+    ///
+    /// Android reaches the same place from two directions: a data-only push that carries the name
+    /// and the first line, and a fifteen-minute worker that asks one question — "what did my
+    /// channels publish" — against the reader's own follows list. This is the client half of that
+    /// worker, run when the reader has just been told something happened instead of on a timer:
+    /// one follows read, the newest page of each followed channel (which is what stores the posts),
+    /// and then the pictures of both. It is bounded on purpose — a notification must not turn into
+    /// forty requests — and every read here writes through the same cache the tab opens from.
+    @discardableResult
+    func refreshSavedContent(limitChannels: Int = 12, postsPerChannel: Int = 12) async -> Int {
+        guard let page = await following().value else {
+            // No network, or no identity: the saved copy is still the answer, and its pictures are
+            // still worth having on disk.
+            await warmSavedImages()
+            return 0
+        }
+        var urls: [String] = page.items.compactMap(\.iconUrl)
+        var refreshed = 0
+        for channel in page.items.prefix(limitChannels) {
+            guard let posts = await channelPosts(channelId: channel.id).value else {
+                // The channel did not answer — its saved posts are what the reader will see, so
+                // their pictures are the ones worth having.
+                urls += (cachedPosts(channelId: channel.id)?.posts ?? []).flatMap { $0.media.compactMap(\.url) }
+                continue
+            }
+            refreshed += 1
+            urls += posts.items.prefix(postsPerChannel).flatMap { $0.media.compactMap(\.url) }
+        }
+        await RemoteImageCache.shared.prefetch(urls, limit: 60)
+        return refreshed
+    }
+
     /// The channel list, or a search over it.
     ///
     /// Only a **first page** is cached: paging appends to the list on screen, and a cache holding

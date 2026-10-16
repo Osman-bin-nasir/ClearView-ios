@@ -378,12 +378,8 @@ private struct ChannelMediaThumbnail: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            if let raw = item.url, let url = URL(string: raw) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.cvSurfaceContainer
-                }
+            if let raw = item.url {
+                RemoteImage(url: raw, placeholder: AnyView(Color.cvSurfaceContainer))
             } else {
                 Color.cvSurfaceContainer
             }
@@ -414,13 +410,14 @@ struct ChannelMediaViewer: View {
         NavigationStack {
             Group {
                 if let url, item.isVideo {
-                    VideoPlayer(player: AVPlayer(url: url))
+                    // Opened through the same cache as the inline player: a clip watched in the
+                    // gallery is on this device afterwards, so watching it again costs nothing.
+                    GoodPostVideoPlayer(url: url)
                 } else if let url {
-                    AsyncImage(url: url) { image in
-                        image.resizable().scaledToFit()
-                    } placeholder: {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    // The full-size viewer: the cache answers this from disk when the picture
+                    // has been seen once, which is what makes the gallery work offline.
+                    RemoteImage(url: url.absoluteString, contentMode: .fit, maxPixelSize: 2_400,
+                                placeholder: AnyView(ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)))
                 } else {
                     CVEmptyState(title: "Not available", message: "This file cannot be opened right now.", symbol: "photo")
                 }

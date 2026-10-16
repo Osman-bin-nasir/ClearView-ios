@@ -97,6 +97,11 @@ final class GoodPostScreenModel {
             let existing = Set(channels.map(\.id))
             channels += followed.filter { !existing.contains($0.id) }
         }
+        // Every avatar this screen is about to draw, into the image cache. Android prefetches
+        // the same list from the feed for the same reason — the reader scrolls into pictures
+        // that are already decoded — and it is what makes the saved channel list readable with
+        // no network instead of a column of circles.
+        await RemoteImageCache.shared.prefetch((ownedChannels + channels).compactMap(\.iconUrl))
     }
 
     func toggleSaved(_ channel: GoodPostChannel) {
@@ -163,6 +168,10 @@ final class ChannelFeedModel {
             nextCursor = page.nextCursor
             message = nil
         } else { message = result.userMessage }
+        // The channel's own face and the pictures of the posts now on screen, stored before
+        // they are scrolled to — Android's `GoodPostImages.prefetch` from the feed, and the
+        // reason a channel opened offline still shows the photographs it showed before.
+        await RemoteImageCache.shared.prefetch([channel.iconUrl].compactMap { $0 } + posts.flatMap { $0.media.compactMap(\.url) })
         if !more {
             emojiOptions = await repository.reactionEmoji().value ?? []
             if await repository.identifiesReaders {

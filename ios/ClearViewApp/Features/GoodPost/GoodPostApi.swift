@@ -237,7 +237,13 @@ enum GoodPostConfiguration {
     static let baseUrlKey = "GoodPostBaseURL"
 
     static var baseURL: String {
-        (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed
+        // A UI test points this at a dead address to prove what the app shows with the network
+        // gone. Read from the environment rather than from `Info.plist` because it has to be
+        // per-launch, and nothing else in the app sets it.
+        if let override = ProcessInfo.processInfo.environment["CLEARVIEW_GOODPOST_BASE_URL"] {
+            return override.trimmed
+        }
+        return (Bundle.main.object(forInfoDictionaryKey: baseUrlKey) as? String)?.trimmed
             ?? "https://clearview-1neb.onrender.com"
     }
 }

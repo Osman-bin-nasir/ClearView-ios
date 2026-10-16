@@ -160,12 +160,8 @@ struct ChannelEditView: View {
         ZStack {
             if let preview {
                 Image(uiImage: preview).resizable().scaledToFill()
-            } else if !iconRemoved, let raw = channel.iconUrl, let url = URL(string: raw) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    initial
-                }
+            } else if !iconRemoved, let raw = channel.iconUrl {
+                RemoteImage(url: raw, placeholder: AnyView(initial))
             } else {
                 initial
             }

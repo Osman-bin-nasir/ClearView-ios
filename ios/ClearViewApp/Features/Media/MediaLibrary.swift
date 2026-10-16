@@ -131,15 +131,46 @@ final class MediaLibrary {
         self.defaults = defaults
         if let restored = defaults.data(forKey: "media.library.v1").flatMap({ try? JSONDecoder().decode(MediaLibraryState.self, from: $0) }) {
             state = restored
+            // The default channel is restored to an install that never had it — ONCE.
+            //
+            // Seeding used to happen on the first run only, which left every device whose library
+            // was written before the default existed with an empty tab and no way to get the
+            // default back. Two things have to stay true at the same time, and the flag is what
+            // keeps them apart: the tab opens with Safina Society on it, and a reader who has
+            // emptied their list never has it filled in behind them.
+            //
+            // The flag is set whether or not anything is seeded, because "the list is empty" is
+            // not a durable answer on its own: this initialiser runs every time SwiftUI builds the
+            // view struct, so a rule that seeds whenever the list is empty re-adds the channel
+            // after the reader removes it — which is exactly what a UI test caught.
+            if !defaults.bool(forKey: Self.defaultChannelSeededKey) {
+                defaults.set(true, forKey: Self.defaultChannelSeededKey)
+                if state.channels.isEmpty, !defaults.bool(forKey: Self.defaultChannelRemovedKey) {
+                    state.channels = [Self.defaultChannel]
+                    persist()
+                }
+            }
         } else {
             state = MediaLibraryState()
-            state.channels = [DirectoryChannel(id: "UC2cX3SmsdWsrRS8t_5zvzEw", platform: "youtube", handle: "SafinaSociety",
-                name: "Safina Society", iconUrl: nil, url: "https://www.youtube.com/channel/UC2cX3SmsdWsrRS8t_5zvzEw",
-                categoryId: nil, subcategoryId: nil, sort: 0)]
+            state.channels = [Self.defaultChannel]
+            defaults.set(true, forKey: Self.defaultChannelSeededKey)
             persist()
         }
         repairCachedChannelIDs()
     }
+
+    /// The channel a Media tab opens with, so it is never empty on a first run.
+    static let defaultChannel = DirectoryChannel(id: "UC2cX3SmsdWsrRS8t_5zvzEw", platform: "youtube", handle: "SafinaSociety",
+        name: "Safina Society", iconUrl: nil, url: "https://www.youtube.com/channel/UC2cX3SmsdWsrRS8t_5zvzEw",
+        categoryId: nil, subcategoryId: nil, sort: 0)
+
+    /// Set when the reader removes that channel themselves, which is the one case where an empty
+    /// list is a decision rather than a gap.
+    private static let defaultChannelRemovedKey = "media.defaultChannel.removed"
+
+    /// Records that the default channel has been considered once, so the decision above is made a
+    /// single time per install rather than on every view rebuild.
+    private static let defaultChannelSeededKey = "media.defaultChannel.seeded"
 
     private func repairCachedChannelIDs() {
         let channels = state.channels
@@ -376,6 +407,11 @@ final class MediaLibrary {
         if let existing = state.channels.first(where: { $0.id == channel.id || MediaChannelIdentity.sameProfile($0, channel) }) {
             state.channels.removeAll { $0.id == existing.id }
             state.hiddenChannelIDs?.removeAll { $0 == existing.id }
+            // Removing the DEFAULT channel is remembered, so the next launch does not put it back:
+            // the seeding above exists for an install that never had it, not to overrule a reader.
+            if existing.id == Self.defaultChannel.id {
+                defaults.set(true, forKey: Self.defaultChannelRemovedKey)
+            }
         }
         else { state.channels.append(channel) }
         persist()

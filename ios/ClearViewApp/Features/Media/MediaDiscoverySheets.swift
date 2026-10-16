@@ -140,29 +140,3 @@ struct MediaFilterSheet: View {
             .accessibilityIdentifier("media.filter.\(title)")
     }
 }
-
-struct HaramaynView: View {
-    @State private var madinah = false
-    @State private var browser: BrowserDestination?
-
-    var body: some View {
-        VStack(spacing: 24) {
-            HStack(spacing: 8) {
-                CVChip(title: "🕋 Makkah Live", selected: !madinah) { madinah = false }
-                CVChip(title: "🕌 Madinah Live", selected: madinah) { madinah = true }
-            }
-            VStack(spacing: 16) {
-                Text(madinah ? "🕌" : "🕋").font(.system(size: 60))
-                Text(madinah ? "Saudi Sunnah TV" : "Saudi Quran TV").font(.title3.bold())
-                Text("Open the official channel's current live broadcast.").font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center)
-                CVButton(title: "Watch live", style: .filled) {
-                    let channel = madinah ? "UCROKYPep-UuODNwyipe6JMw" : "UCos52azQNBgW63_9uDJoPDA"
-                    browser = BrowserDestination("https://www.youtube.com/channel/\(channel)/live")
-                }
-            }.frame(maxWidth: .infinity).padding(24).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 18))
-            Text("Live playback currently opens in the in-app browser.").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-            Spacer()
-        }.padding(20).background(Color.cvBackground).navigationTitle("Haramayn").navigationBarTitleDisplayMode(.inline)
-            .sheet(item: $browser) { BrowserSheet(url: $0.url) }
-    }
-}

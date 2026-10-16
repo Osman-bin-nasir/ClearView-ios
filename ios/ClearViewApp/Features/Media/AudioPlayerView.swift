@@ -57,14 +57,12 @@ struct AudioPlayerView: View {
     }
 
     private var artwork: some View {
-        AsyncImage(url: controller.track?.artworkURL.flatMap(URL.init(string:))) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
+        RemoteImage(url: controller.track?.artworkURL, maxPixelSize: 900, placeholder: AnyView(
             ZStack {
                 Color.cvPrimaryContainer
                 Image(systemName: "headphones").font(.system(size: 46)).foregroundStyle(Color.cvPrimary)
             }
-        }
+        ))
         .frame(width: 240, height: 240)
         .clipShape(RoundedRectangle(cornerRadius: 24))
         .accessibilityHidden(true)
