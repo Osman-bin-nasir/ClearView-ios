@@ -211,6 +211,12 @@ struct GoodPostAdEditView: View {
     @State private var uploading = false
     @State private var busy = false
     @State private var message: String?
+    /// How long the card runs, and the two timestamps it resolves to (§11).
+    @State private var duration: GoodPostAdDuration
+    @State private var startsAt: String?
+    @State private var expiresAt: String?
+    @State private var pickingStart = false
+    @State private var pickingExpiry = false
 
     init(ad: GoodPostAd?, repository: GoodPostRepository) {
         self.ad = ad
@@ -225,6 +231,9 @@ struct GoodPostAdEditView: View {
         _textColor = State(initialValue: ad?.textColor ?? adDefaultTextColor)
         _backgroundColor = State(initialValue: ad?.backgroundColor ?? adDefaultBackgroundColor)
         _imageFit = State(initialValue: ad?.imageFit ?? "cover")
+        _duration = State(initialValue: GoodPostAdDuration.forExistingAd(expiresAt: ad?.expiresAt))
+        _startsAt = State(initialValue: ad?.startsAt)
+        _expiresAt = State(initialValue: ad?.expiresAt)
     }
 
     var body: some View {
@@ -270,6 +279,33 @@ struct GoodPostAdEditView: View {
                     }
                 }
 
+                // How long the card runs, replacing two fields that asked an administrator to type
+                // an ISO timestamp — a format a person should never have to know, let alone get
+                // right on a phone keyboard.
+                Section("How long it runs") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(GoodPostAdDuration.allCases, id: \.self) { option in
+                                CVChip(title: option.label, selected: duration == option) {
+                                    setDuration(option)
+                                }
+                            }
+                        }.padding(.vertical, 2)
+                    }
+                    DateRow(
+                        label: "Starts",
+                        value: formatAdDate(startsAt) ?? "As soon as it is saved",
+                        enabled: !busy
+                    ) { pickingStart = true }
+                    DateRow(
+                        label: "Ends",
+                        value: formatAdDate(expiresAt) ?? "Never expires",
+                        enabled: !busy
+                    ) { pickingExpiry = true }
+                    Text("Tap a date to choose another. A card with no end runs until you switch it off or delete it.")
+                        .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                }
+
                 Section("Colours") {
                     ColourRow(title: "Background", selection: $backgroundColor, options: adBackgroundColors)
                     ColourRow(title: "Text", selection: $textColor, options: adTextColors)
@@ -288,6 +324,45 @@ struct GoodPostAdEditView: View {
                 }
             }
             .interactiveDismissDisabled(busy)
+            // One calendar per date rather than a range: a card's window is "from then until then",
+            // and each half is optional — a card with no start begins now, and one with no end never
+            // expires.
+            .sheet(isPresented: $pickingStart) {
+                AdDatePicker(
+                    title: "Starts",
+                    initial: startsAt,
+                    onConfirm: { picked in
+                        // Anchored to the local start of the chosen day, so "starts today" means
+                        // today where the administrator is sitting.
+                        startsAt = picked.map { isoFromLocalStart($0) }
+                        pickingStart = false
+                    },
+                    onClear: {
+                        // Clearing rather than leaving it: this is also the way to take a scheduled
+                        // start back to "begins as soon as I save".
+                        startsAt = nil
+                        pickingStart = false
+                    }
+                )
+            }
+            .sheet(isPresented: $pickingExpiry) {
+                AdDatePicker(
+                    title: "Ends",
+                    initial: expiresAt,
+                    onConfirm: { picked in
+                        // A picked date makes the schedule custom: the pills describe a length
+                        // chosen in advance, and this one was not.
+                        duration = .custom
+                        expiresAt = picked.map { isoFromLocalStart($0) }
+                        pickingExpiry = false
+                    },
+                    onClear: {
+                        duration = .custom
+                        expiresAt = nil
+                        pickingExpiry = false
+                    }
+                )
+            }
             .fileImporter(
                 isPresented: $showFiles,
                 allowedContentTypes: [.jpeg, .png, .gif],
@@ -333,6 +408,17 @@ struct GoodPostAdEditView: View {
         }
     }
 
+    /// Choosing a length resolves the two timestamps, which is what the server stores.
+    ///
+    /// The start goes back to "now" on every change of length, because a length is measured from
+    /// the moment it is chosen: leaving a picked start in place would put the end behind the start
+    /// for a card that was scheduled and then given a week to run.
+    private func setDuration(_ option: GoodPostAdDuration) {
+        duration = option
+        expiresAt = option.expiry(from: Date())
+        startsAt = nil
+    }
+
     private func save() async {
         let trimmed = text.trimmed
         // The same two refusals Android makes, and in the same place — before the round trip.
@@ -367,8 +453,8 @@ struct GoodPostAdEditView: View {
             "showInExplore": showInExplore,
             "enabled": enabled,
             "priority": Int(priority.trimmed) ?? 100,
-            "startsAt": ad?.startsAt ?? NSNull(),
-            "expiresAt": ad?.expiresAt ?? NSNull(),
+            "startsAt": startsAt ?? NSNull(),
+            "expiresAt": expiresAt ?? NSNull(),
             "textColor": textColor,
             "backgroundColor": backgroundColor,
             "imageFit": imageFit,
@@ -386,6 +472,77 @@ struct GoodPostAdEditView: View {
             result = await repository.adminCreateAd(body: body)
         }
         if result.value != nil { dismiss() } else { message = result.userMessage }
+    }
+}
+
+/// One of the schedule's two dates: a label, its resolved value, and the way into the calendar.
+private struct DateRow: View {
+    let label: String
+    let value: String
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(label)
+                Spacer(minLength: 12)
+                Text(value).foregroundStyle(Color.cvOnSurfaceVariant)
+                Image(systemName: "calendar").font(.caption).foregroundStyle(Color.cvPrimary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(enabled == false)
+    }
+}
+
+/// A calendar for one date, with the two answers a date field needs: a day, or none at all.
+///
+/// Presented as a sheet with its own Confirm because that is what makes "Clear" a decision rather
+/// than an accident — a date field that cannot be emptied is one that can only be changed by picking
+/// another.
+private struct AdDatePicker: View {
+    let title: String
+    let initial: String?
+    let onConfirm: (Date?) -> Void
+    let onClear: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var day: Date
+
+    init(title: String, initial: String?, onConfirm: @escaping (Date?) -> Void, onClear: @escaping () -> Void) {
+        self.title = title
+        self.initial = initial
+        self.onConfirm = onConfirm
+        self.onClear = onClear
+        // Opens on the date the card already has, or today when it has none — never on a blank
+        // calendar, which would make "this date is already set" invisible.
+        let millis = parseIsoMillis(initial)
+        _day = State(initialValue: millis.map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date())
+    }
+
+    var body: some View {
+        NavigationStack {
+            DatePicker(title, selection: $day, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .padding(16)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Clear", role: .destructive, action: onClear)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("OK") { onConfirm(day) }
+                    }
+                }
+        }
+        .tint(.cvPrimary)
+        .presentationDetents([.medium, .large])
     }
 }
 

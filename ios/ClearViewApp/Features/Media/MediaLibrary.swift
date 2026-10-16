@@ -108,6 +108,14 @@ struct MediaLibraryState: Codable {
     var feed: [LibraryVideo] = []
     var hiddenVideoIDs: [String]?
     var hiddenChannelIDs: [String]?
+    /// Channels whose notifications are silenced, by channel id.
+    ///
+    /// Separate from `hiddenChannelIDs` on purpose: a muted channel still refreshes
+    /// and still appears in the feed, and only its notifications are off — so the two
+    /// states must be able to hold at once, which one list could not express.
+    /// Optional like the two above, so a library written before muting existed still
+    /// decodes instead of resetting the whole tab.
+    var mutedChannelIDs: [String]?
     var watchProgress: [String: MediaWatchProgress]?
 
     /// YouTube playlists imported by URL, and their fetched videos.
@@ -228,6 +236,37 @@ final class MediaLibrary {
         if hidden.contains(channel.id) { hidden.removeAll { $0 == channel.id } }
         else { hidden.append(channel.id) }
         state.hiddenChannelIDs = hidden
+        persist()
+    }
+
+    /// Hides one channel from the All Feed by its id — the video card's own
+    /// "Hide channel" (Android's `libraryStore.hideChannel(video.channelId)`).
+    ///
+    /// A plain hide rather than a toggle: the card's menu says "Hide channel", and a
+    /// second tap on a menu that has already disappeared could only ever unhide
+    /// something the reader can no longer see. Idempotent, so hiding twice is not a
+    /// way to accidentally unhide.
+    func hideChannel(_ channelID: String) {
+        guard !channelID.isEmpty else { return }
+        var hidden = state.hiddenChannelIDs ?? []
+        guard !hidden.contains(channelID) else { return }
+        hidden.append(channelID)
+        state.hiddenChannelIDs = hidden
+        persist()
+    }
+
+    /// Whether one channel's notifications are silenced.
+    func isChannelMuted(_ channelID: String) -> Bool {
+        (state.mutedChannelIDs ?? []).contains(channelID)
+    }
+
+    /// Silences or un-silences ONE channel's notifications, independent of every
+    /// other channel and of the platform. Android's `onToggleNotifications`.
+    func toggleChannelNotifications(_ channel: DirectoryChannel) {
+        var muted = state.mutedChannelIDs ?? []
+        if muted.contains(channel.id) { muted.removeAll { $0 == channel.id } }
+        else { muted.append(channel.id) }
+        state.mutedChannelIDs = muted
         persist()
     }
 
@@ -537,6 +576,20 @@ final class MediaLibrary {
         state.importedPlaylistVideos?[playlistId] ?? []
     }
 
+    /// Writes one imported playlist's videos into the cache.
+    ///
+    /// The dictionary is created before the subscript write, and that line is the
+    /// whole of the "imported playlist shows 0 videos" bug: `dict?[key] = value` on a
+    /// **nil** dictionary is a silent no-op in Swift — the optional chain short-
+    /// circuits and the setter is never called — so the fetched videos were handed to
+    /// nothing. The card counted an empty cache, and every open re-fetched the playlist
+    /// from YouTube, because "nothing is cached" is exactly what a no-op leaves behind.
+    func storeImportedPlaylistVideos(_ playlistId: String, videos: [LibraryVideo]) {
+        if state.importedPlaylistVideos == nil { state.importedPlaylistVideos = [:] }
+        state.importedPlaylistVideos?[playlistId] = videos
+        persist()
+    }
+
     /// Imports a YouTube playlist by URL (or bare id) and caches its videos.
     ///
     /// Imports are keyed by playlist id, so re-importing the same link refreshes
@@ -553,14 +606,13 @@ final class MediaLibrary {
         if let index = list.firstIndex(where: { $0.playlistId == record.playlistId }) { list[index] = record }
         else { list.append(record) }
         state.importedPlaylists = list
-        state.importedPlaylistVideos?[record.playlistId] = imported.videos
-        persist()
+        storeImportedPlaylistVideos(record.playlistId, videos: imported.videos)
         return record
     }
 
     func removeImportedPlaylist(_ playlistId: String) {
         state.importedPlaylists = (state.importedPlaylists ?? []).filter { $0.playlistId != playlistId }
-        state.importedPlaylistVideos?[playlistId] = nil
+        state.importedPlaylistVideos?.removeValue(forKey: playlistId)
         persist()
     }
 
@@ -575,7 +627,7 @@ final class MediaLibrary {
         if let cached = state.importedPlaylistVideos?[playlist.playlistId], !cached.isEmpty { return cached }
         let reference = playlist.sourceRef.isEmpty ? playlist.playlistId : playlist.sourceRef
         let refreshed = try await YouTubePlaylistImporter.fetch(input: reference)
-        state.importedPlaylistVideos?[playlist.playlistId] = refreshed.videos
+        storeImportedPlaylistVideos(playlist.playlistId, videos: refreshed.videos)
         var list = state.importedPlaylists ?? []
         if let index = list.firstIndex(where: { $0.playlistId == playlist.playlistId }) {
             list[index].title = refreshed.title

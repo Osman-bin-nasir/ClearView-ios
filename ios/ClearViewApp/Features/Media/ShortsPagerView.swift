@@ -98,6 +98,7 @@ private struct ShortPage: View {
     @State private var showAddToPlaylist = false
 
     private var youtubeReference: YouTubeRef? { YouTubeLink.parse(short.url) }
+    private var downloads: AudioDownloads { .shared }
 
     var body: some View {
         ZStack {
@@ -209,12 +210,27 @@ private struct ShortPage: View {
                     .accessibilityLabel(player.muted ? "Unmute" : "Mute")
                     .accessibilityIdentifier("shorts.mute")
                 }
+                // The same five things a card's ⋮ carries in the feed — Add to
+                // playlist, Hide video, Hide channel, Download audio, Share — because
+                // a Short watched here is the same video the shelf was offering, and
+                // two menus for one video is how they drift apart.
                 Menu {
-                    Button(library.state.saved.contains(short) ? "Unsave" : "Save", systemImage: "bookmark") {
-                        library.toggleSave(short)
-                    }
                     Button("Add to playlist…", systemImage: "text.badge.plus") { showAddToPlaylist = true }
-                    Button("Hide", systemImage: "eye.slash") { library.hide(short) }
+                    Button("Hide video", systemImage: "eye.slash") { library.hide(short) }
+                    if !(short.channelID ?? "").isEmpty {
+                        Button("Hide channel", systemImage: "person.crop.circle.badge.xmark") {
+                            library.hideChannel(short.channelID ?? "")
+                        }
+                    }
+                    if downloads.isDownloaded(short.id) {
+                        Button("Delete download", systemImage: "trash", role: .destructive) {
+                            if let item = downloads.item(for: short.id) { downloads.remove(item) }
+                        }
+                    } else if downloads.isDownloading(short.id) {
+                        Button("Cancel download", systemImage: "xmark.circle") { downloads.cancel(short.id) }
+                    } else if !short.isPost && short.live != true {
+                        Button("Download audio", systemImage: "arrow.down.to.line") { downloads.download(short) }
+                    }
                     ShareLink(item: short.url)
                 } label: {
                     Image(systemName: "ellipsis").rotationEffect(.degrees(90))
@@ -293,11 +309,15 @@ private struct ShortTransport: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // Sized to the 44-point minimum touch target rather than to the 34 it
+            // used to be: this is the control a thumb aims at over a moving clip,
+            // without looking, and the old circle was smaller than the space a
+            // finger actually covers.
             Button(action: onTogglePlay) {
                 Image(systemName: playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(.black.opacity(0.35), in: Circle())
+                    .font(.system(size: 19, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.4), in: Circle())
             }
             .buttonStyle(.plain)
             .disabled(!canToggle)

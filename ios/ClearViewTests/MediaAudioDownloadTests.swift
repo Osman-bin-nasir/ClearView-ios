@@ -232,6 +232,71 @@ private struct StubContainerNormalizer: AudioContainerNormalizing {
     }
 }
 
+// MARK: - The download's own vocabulary
+
+extension MediaAudioDownloadTests {
+
+    /// The size a reader sees, in the exact wording Android's `formatBytes` produces:
+    /// each unit switch happens at its own power of two, one decimal is shown, and a
+    /// whole value loses it ("14 MB", never "14.0 MB").
+    func testByteSizesAreWordedLikeAndroid() {
+        XCTAssertEqual(AudioDownloadFormat.bytes(0), "0 B")
+        XCTAssertEqual(AudioDownloadFormat.bytes(500), "500 B")
+        XCTAssertEqual(AudioDownloadFormat.bytes(1023), "1023 B")
+        XCTAssertEqual(AudioDownloadFormat.bytes(1024), "1 KB")
+        XCTAssertEqual(AudioDownloadFormat.bytes(14 * 1024), "14 KB")
+        XCTAssertEqual(AudioDownloadFormat.bytes(14 * 1024 * 1024), "14 MB")
+        XCTAssertEqual(AudioDownloadFormat.bytes(286_720_000), "273.4 MB")
+        XCTAssertEqual(AudioDownloadFormat.bytes(1_500_000_000), "1.4 GB")
+        // A negative can only come from a broken report; "-5 B" would be worse than "0 B".
+        XCTAssertEqual(AudioDownloadFormat.bytes(-5), "0 B")
+    }
+
+    /// "~2m 30s left" — and silence while the estimate would be noise.
+    ///
+    /// The sub-2-second case is deliberate in Android and kept here: an estimate that
+    /// reads "~0s left" for the last second of every download is less useful than no
+    /// estimate at all, and nil (nothing measured yet) is the same answer.
+    func testEtaIsWordedLikeAndroidAndStaysQuietWhenItWouldBeNoise() {
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: nil), "")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: -1), "")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 0), "")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 1), "")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 45), "~45s left")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 150), "~2m 30s left")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 3600), "~1h 0m left")
+        XCTAssertEqual(AudioDownloadFormat.eta(seconds: 5400), "~1h 30m left")
+    }
+
+    /// YouTube's fragmented MP4 makes AVFoundation measure a stream at twice its real
+    /// length — measured, not assumed: a file whose own boxes declared 715.128 s had
+    /// `AVPlayerItem.duration` answering 1430.208 s.
+    ///
+    /// Audio mode hands that container straight to `AVPlayer`, so the number is
+    /// corrected against the length the source already knows. This is the correction,
+    /// and it is deliberately narrow.
+    func testADoubledContainerDurationIsCorrectedToTheSourcesOwnLength() {
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 1430.208, expected: 715.128), 715.128)
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 9128.5, expected: 4564.25), 4564.25)
+    }
+
+    /// Anything that is not a near-exact doubling is believed as it stands: a stream
+    /// whose length legitimately differs from the feed's record (a re-upload, an
+    /// edited cut) must not be silently rewritten to the older number.
+    func testANonDoubledDurationIsLeftAlone() {
+        // Right length.
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 715.0, expected: 715.128), 715.0)
+        // Legitimately longer than the feed record, but not by a doubling.
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 900, expected: 715.128), 900)
+        // More than a doubling — three times is a different fault, not this one.
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 2145, expected: 715.128), 2145)
+        // Nothing known to check against, and nothing finite to report.
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: 715.0, expected: 0), 715.0)
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: .nan, expected: 715.128), 0)
+        XCTAssertEqual(AudioPlaybackController.trustedDuration(reported: -3, expected: 715.128), 0)
+    }
+}
+
 private final class DownloadFixtureProtocol: URLProtocol {
     static var response: ((URLRequest) -> (Int, [String: String], Data))!
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "audio.test" }

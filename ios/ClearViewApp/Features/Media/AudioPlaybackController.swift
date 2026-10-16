@@ -84,6 +84,13 @@ final class AudioPlaybackController {
     private var statusObservation: NSKeyValueObservation?
     private var ticker: Timer?
 
+    /// The source's own length for what is loaded, when it knows it.
+    ///
+    /// Carried only to sanity-check what AVFoundation reports — see
+    /// ``trustedDuration(reported:expected:)``. Zero means "the source did not say",
+    /// in which case whatever the container declares is taken at face value.
+    private var expectedDuration: Double = 0
+
     /// When the sleep timer fires (an absolute instant), or nil.
     ///
     /// An absolute deadline, not a total of playing time: the question the timer
@@ -106,27 +113,53 @@ final class AudioPlaybackController {
     // MARK: - Loading and transport
 
     /// Plays a downloaded file.
-    func playLocal(videoId: String, title: String, channel: String, artworkURL: String?, fileURL: URL, startAt: Double = 0) {
+    func playLocal(videoId: String, title: String, channel: String, artworkURL: String?, fileURL: URL, startAt: Double = 0,
+                   expectedDuration: Double = 0) {
         resolveTask?.cancel()
         resolveTask = nil
         isResolving = false
         streamResolver = nil
         load(Track(videoId: videoId, title: title, channel: channel, artworkURL: artworkURL,
-                   isStream: false, localFileURL: fileURL, streamURL: nil), startAt: startAt)
+                   isStream: false, localFileURL: fileURL, streamURL: nil), startAt: startAt,
+             expectedDuration: expectedDuration)
     }
 
     /// Plays the audio-only stream of a video that was not downloaded.
     func playStream(videoId: String, title: String, channel: String, artworkURL: String?, streamURL: URL, startAt: Double = 0,
-                    resolver: (() async throws -> URL)? = nil) {
+                    expectedDuration: Double = 0, resolver: (() async throws -> URL)? = nil) {
         resolveTask?.cancel()
         resolveTask = nil
         isResolving = false
         streamResolver = resolver
         load(Track(videoId: videoId, title: title, channel: channel, artworkURL: artworkURL,
-                   isStream: true, localFileURL: nil, streamURL: streamURL), startAt: startAt)
+                   isStream: true, localFileURL: nil, streamURL: streamURL), startAt: startAt,
+             expectedDuration: expectedDuration)
     }
 
-    private func load(_ newTrack: Track, startAt: Double, resetSleepTimer: Bool = true) {
+    /// The length to report for a loaded source.
+    ///
+    /// YouTube serves adaptive audio as a **fragmented** MP4 whose own `mvhd`/`mdhd`
+    /// declare the true length while AVFoundation measures the container at twice it —
+    /// measured on a real download of `k9VvSaQC53Y`: the boxes said 715.128 s and both
+    /// `AVURLAsset.duration` and `AVPlayerItem.duration` answered 1430.208 s. A download
+    /// can be cured by remuxing it (`FragmentedAudioRemuxer`), but a STREAM cannot be
+    /// rewritten on the way past: Audio mode hands the same container to `AVPlayer`, so
+    /// the reader gets a scrubber and a remaining-time describing twice the audio that
+    /// is really there — and a scrubber whose far half is silence. That is what makes a
+    /// long talk feel unplayable while a one-minute clip, whose doubling is confined to
+    /// a minute nobody drags to, seems fine.
+    ///
+    /// So the container is not believed when the source knows better. Deliberately
+    /// narrow: only a near-exact doubling is corrected, and only when the source gave a
+    /// trustworthy positive length — a duration the app second-guesses for any other
+    /// reason is worse than one that is merely wrong.
+    nonisolated static func trustedDuration(reported: Double, expected: Double) -> Double {
+        guard expected > 0, reported.isFinite, reported > 0 else { return reported.isFinite ? max(0, reported) : 0 }
+        if reported >= expected * 1.5 && reported <= expected * 2.5 { return expected }
+        return reported
+    }
+
+    private func load(_ newTrack: Track, startAt: Double, expectedDuration: Double = 0, resetSleepTimer: Bool = true) {
         let safeStart = startAt.isFinite ? max(0, startAt) : 0
         teardownPlayer()
         track = newTrack
@@ -134,6 +167,7 @@ final class AudioPlaybackController {
         position = safeStart
         duration = 0
         lastPosition = safeStart
+        self.expectedDuration = expectedDuration.isFinite ? max(0, expectedDuration) : 0
         // A new source starts a new session: the previous track's sleep timer
         // does not belong to this one.
         if resetSleepTimer { clearSleepTimer() }
@@ -160,7 +194,7 @@ final class AudioPlaybackController {
                 case .readyToPlay:
                     guard !didPrepare else { return }
                     didPrepare = true
-                    self.duration = item.duration.seconds.isFinite ? max(0, item.duration.seconds) : 0
+                    self.duration = Self.trustedDuration(reported: item.duration.seconds, expected: self.expectedDuration)
                     self.isBuffering = false
                     MediaLog.audio.info("load \(newTrack.videoId, privacy: .public): readyToPlay duration=\(self.duration, privacy: .public)s")
                     if safeStart > 0 {
@@ -196,10 +230,11 @@ final class AudioPlaybackController {
     func retry() {
         guard let track, !isResolving else { return }
         guard track.isStream, let resolver = streamResolver else {
-            load(track, startAt: position, resetSleepTimer: false)
+            load(track, startAt: position, expectedDuration: expectedDuration, resetSleepTimer: false)
             return
         }
         let resumeAt = position
+        let expected = expectedDuration
         isResolving = true
         resolveTask = Task { [weak self] in
             guard let self else { return }
@@ -209,7 +244,7 @@ final class AudioPlaybackController {
                 guard self.track?.videoId == track.videoId else { return }
                 self.load(Track(videoId: track.videoId, title: track.title, channel: track.channel,
                                 artworkURL: track.artworkURL, isStream: true, localFileURL: nil, streamURL: url),
-                          startAt: resumeAt, resetSleepTimer: false)
+                          startAt: resumeAt, expectedDuration: expected, resetSleepTimer: false)
             } catch is CancellationError { return }
             catch {
                 guard !Task.isCancelled else { return }

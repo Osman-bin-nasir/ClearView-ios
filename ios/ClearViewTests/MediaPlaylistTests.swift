@@ -108,6 +108,62 @@ final class MediaPlaylistTests: XCTestCase {
         XCTAssertEqual(videos?.map(\.id), ["dQw4w9WgXcQ"])
     }
 
+    // MARK: - An imported playlist's cache
+
+    /// An imported playlist's videos must actually land in the cache.
+    ///
+    /// This is a regression test with a specific cause: `dict?[key] = value` on a
+    /// **nil** dictionary is a silent no-op in Swift, so the import fetched the videos,
+    /// reported success, and cached nothing. The manager's card then read its count out
+    /// of an empty cache — "0 videos" — and opening the playlist re-fetched it from
+    /// YouTube every time, because "nothing cached" is exactly what a no-op leaves
+    /// behind. The number asserted here is the number the card drew.
+    @MainActor
+    func testImportedPlaylistVideosAreCachedSoTheCardCountsThem() {
+        let suite = "cv.media.playlist.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = MediaLibrary(defaults: defaults)
+
+        // A library that has never held one: the dictionary is nil, which is the
+        // state the bug needed. Asserted rather than assumed, so this test cannot
+        // quietly stop covering the bug it was written for.
+        XCTAssertNil(library.state.importedPlaylistVideos)
+        XCTAssertEqual(library.cachedPlaylistVideos("PLtest").count, 0)
+
+        library.storeImportedPlaylistVideos("PLtest", videos: [
+            LibraryVideo(id: "aaaaaaaaaaa", title: "One", url: "https://www.youtube.com/watch?v=aaaaaaaaaaa"),
+            LibraryVideo(id: "bbbbbbbbbbb", title: "Two", url: "https://www.youtube.com/watch?v=bbbbbbbbbbb"),
+        ])
+
+        XCTAssertEqual(library.cachedPlaylistVideos("PLtest").count, 2)
+        XCTAssertEqual(library.cachedPlaylistVideos("PLtest").first?.title, "One")
+    }
+
+    /// Unsubscribing is a hide, not a toggle, and muting is a different state
+    /// altogether — the two the channel list's bell and ✕ write.
+    @MainActor
+    func testHidingAChannelIsIdempotentAndMutingIsASeparateState() {
+        let suite = "cv.media.channels.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = MediaLibrary(defaults: defaults)
+        let channel = library.state.channels.first!
+
+        library.hideChannel(channel.id)
+        library.hideChannel(channel.id)
+        XCTAssertEqual((library.state.hiddenChannelIDs ?? []).filter { $0 == channel.id }.count, 1,
+                       "hiding twice must not put the id in twice")
+        XCTAssertFalse(library.isChannelMuted(channel.id), "hiding is not muting")
+
+        library.toggleChannelNotifications(channel)
+        XCTAssertTrue(library.isChannelMuted(channel.id))
+        // A muted channel is still subscribed and still in the feed; only its
+        // notifications are off, so un-hiding it later must not have been the same tap.
+        library.toggleChannelNotifications(channel)
+        XCTAssertFalse(library.isChannelMuted(channel.id))
+    }
+
     // MARK: - Fixtures
 
     /// A minimal playlist page: the real one is ~2 MB of embedded JSON, so the

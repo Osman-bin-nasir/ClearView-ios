@@ -107,14 +107,22 @@ struct MediaVideoPlayerView: View {
     /// The action row, and the ⋮ menu that carries what will not fit in it.
     ///
     /// The menu is Android's `VideoPlayerScreen` overflow: add to a playlist,
-    /// hide the video, mark it watched, and the two Continue Watching controls —
-    /// including the row-wide reset, which lives HERE rather than on the feed's
-    /// own ⋮ because it is a decision about what you were watching.
+    /// hide the video, mark it watched, and the row-wide Continue Watching reset,
+    /// which lives HERE rather than on the feed's own ⋮ because it is a decision
+    /// about what you were watching.
+    ///
+    /// It deliberately does NOT carry "Save video" or "Reload player", and that is
+    /// about what a player's ⋮ is FOR. Saving is a decision about the shelf, made
+    /// while looking at the shelf — the card's own ⋮ is where it belongs — and by the
+    /// time a video is open, saving it is not what a hand reaching for this menu wants.
+    /// Reload is a control over the embed, not over the video, and offering it here
+    /// invites the reader to press it instead of reporting the problem; when the embed
+    /// really has failed, the error card below carries its own Reload, next to the
+    /// reason it is offering one.
     private var actions: some View {
         HStack(alignment: .top, spacing: 0) {
             Menu {
                 Button("Add to playlist…", systemImage: "text.badge.plus") { showAddToPlaylist = true }
-                Button(library.state.saved.contains { $0.id == video.id } ? "Remove from saved videos" : "Save video", systemImage: "bookmark") { library.toggleSave(video) }
                 Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
                 // A live broadcast has no finite length to finish, so "watched"
                 // would have nothing to mean.
@@ -125,7 +133,6 @@ struct MediaVideoPlayerView: View {
                 }
                 Divider()
                 Button("Reset Continue Watching", systemImage: "arrow.counterclockwise") { showResetContinue = true }
-                Button("Reload player", systemImage: "arrow.clockwise") { player.reload() }
             } label: { actionLabel("More", symbol: "ellipsis", vertical: true) }.accessibilityIdentifier("media.player.more")
             ShareLink(item: video.url) { actionLabel("Share", symbol: "square.and.arrow.up") }.accessibilityIdentifier("media.player.share")
             Button { showSpeed.toggle() } label: { actionLabel("Speed", symbol: "speedometer") }.accessibilityIdentifier("media.player.speed")
@@ -210,7 +217,8 @@ struct MediaVideoPlayerView: View {
 
         if let fileURL = downloads.fileURL(for: video.id) {
             controller.playLocal(videoId: video.id, title: video.title, channel: video.channel,
-                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: audioStart)
+                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: audioStart,
+                                 expectedDuration: knownDuration)
             showAudioPlayer = true
             return
         }
@@ -221,11 +229,22 @@ struct MediaVideoPlayerView: View {
             let extracted = try await YouTubeAudioExtractor().extractAudio(videoId: video.id)
             controller.playStream(videoId: video.id, title: video.title, channel: video.channel,
                                   artworkURL: video.thumbnail, streamURL: extracted.url, startAt: audioStart,
+                                  expectedDuration: knownDuration,
                                   resolver: { try await YouTubeAudioExtractor().extractAudio(videoId: video.id).url })
             showAudioPlayer = true
         } catch {
             audioError = error.localizedDescription
         }
+    }
+
+    /// The video's real length, as best the app knows it.
+    ///
+    /// The embed's own duration while it is playing, otherwise the duration the feed
+    /// resolved for the card. Handed to the audio player as the number to trust over
+    /// the stream's container — see `AudioPlaybackController.trustedDuration`.
+    private var knownDuration: Double {
+        if player.duration > 0 { return player.duration }
+        return Double(video.durationSeconds ?? 0)
     }
 
     /// The Download Audio control, in whichever of its four states applies:
@@ -250,28 +269,50 @@ struct MediaVideoPlayerView: View {
                     .background(Color.cvSurfaceVariant, in: Capsule())
             }.buttonStyle(.plain).accessibilityIdentifier("media.player.playOffline")
         } else if let update {
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 if update.fraction < 0 {
                     ProgressView()
                 } else {
                     ProgressView(value: update.fraction)
                 }
                 HStack {
-                    Text(update.phase == .resolving ? "Finding the audio…" : update.phase == .processing ? "Preparing audio file…" : "Downloading…")
+                    Text(downloadLabel(update))
                         .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                        .accessibilityIdentifier("media.player.downloading")
                     Spacer(minLength: 8)
                     Button("Cancel", role: .destructive) { downloads.cancel(video.id) }.font(.caption.bold())
+                }
+                // How much is left, and how long it will take. Android's own two
+                // lines, and the reason for them: a transfer with no estimate is
+                // indistinguishable from one that has stalled, and the size is what
+                // tells the reader whether the wait is worth starting.
+                let eta = AudioDownloadFormat.eta(seconds: update.etaSeconds)
+                if !eta.isEmpty {
+                    Text(eta).font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
+                        .accessibilityIdentifier("media.player.downloadEta")
                 }
             }
             .padding(14)
             .background(Color.cvSurfaceVariant, in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityIdentifier("media.player.downloading")
         } else {
             Button { downloads.download(video) } label: {
                 Label("Download Audio", systemImage: "arrow.down.to.line")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 15)
                     .background(Color.cvSurfaceVariant, in: Capsule())
             }.buttonStyle(.plain).accessibilityIdentifier("media.player.downloadAudio")
+        }
+    }
+
+    /// The word for the transfer in progress, with the size when it is known: Android's
+    /// `Preparing… · ≈ 12.3 MB` / `Downloading 42% · ≈ 12.3 MB`.
+    private func downloadLabel(_ update: AudioDownloadProgress) -> String {
+        let size = update.totalBytes.flatMap { $0 > 0 ? " · ≈ \(AudioDownloadFormat.bytes($0))" : nil } ?? ""
+        switch update.phase {
+        case .resolving, .processing:
+            return "Preparing…\(size)"
+        case .downloading:
+            guard update.fraction >= 0 else { return "Downloading…\(size)" }
+            return "Downloading \(Int((min(1, max(0, update.fraction)) * 100).rounded()))%\(size)"
         }
     }
 
@@ -293,7 +334,7 @@ struct MediaVideoPlayerView: View {
         player.command("player.pauseVideo();")
         AudioPlaybackController.shared.playLocal(
             videoId: video.id, title: video.title, channel: video.channel,
-            artworkURL: video.thumbnail, fileURL: fileURL
+            artworkURL: video.thumbnail, fileURL: fileURL, expectedDuration: knownDuration
         )
         downloads.markPlayed(video.id)
         showAudioPlayer = true

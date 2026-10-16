@@ -2,6 +2,50 @@ import Foundation
 import AVFoundation
 import Observation
 
+/// How the download UI words a size and an estimated time remaining.
+///
+/// A direct port of Android's `Formatters.kt` (`formatBytes` / `formatEtaRemaining`),
+/// wording included, because these two apps describe the same download and a reader
+/// moving between them should not find one saying "286.7 MB" and the other "287 MB".
+/// Pure and static so both the strings are unit-testable without a download.
+enum AudioDownloadFormat {
+
+    /// `500 B`, `14 KB`, `286.7 MB`, `1.5 GB` — one decimal, with a trailing `.0`
+    /// stripped so an exact value reads cleanly.
+    static func bytes(_ value: Int64) -> String {
+        let bytes = max(0, value)
+        let units: [(threshold: Int64, divisor: Double, suffix: String)] = [
+            (1 << 30, Double(1 << 30), "GB"),
+            (1 << 20, Double(1 << 20), "MB"),
+            (1 << 10, Double(1 << 10), "KB"),
+        ]
+        for unit in units where bytes >= unit.threshold {
+            return compact(Double(bytes) / unit.divisor) + " " + unit.suffix
+        }
+        return "\(bytes) B"
+    }
+
+    /// `~2m 30s left` for an estimate in seconds, or "" while the estimate would be
+    /// noise — too early to measure, or so close to done that `~0s left` is worse
+    /// than saying nothing. Nil (no estimate yet) and the sub-2-second case are the
+    /// same answer.
+    static func eta(seconds: Int64?) -> String {
+        guard let seconds, seconds >= 2 else { return "" }
+        let value = max(0, seconds)
+        switch value {
+        case ..<60: return "~\(value)s left"
+        case ..<3600: return "~\(value / 60)m \(value % 60)s left"
+        default: return "~\(value / 3600)h \((value % 3600) / 60)m left"
+        }
+    }
+
+    /// One decimal, `.0` dropped.
+    private static func compact(_ value: Double) -> String {
+        let text = String(format: "%.1f", value)
+        return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+    }
+}
+
 /// Live progress for one in-flight download.
 struct AudioDownloadProgress: Equatable {
     enum Phase: Equatable {

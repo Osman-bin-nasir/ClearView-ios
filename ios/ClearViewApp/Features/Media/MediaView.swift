@@ -25,6 +25,16 @@ struct MediaView: View {
     @State private var showHiddenChannels = false
     @State private var unavailable: String?
     @State private var pendingRemoval: DirectoryChannel?
+    /// The channel list's own controls, held here rather than in a nested view so
+    /// selecting or removing a channel writes the same state the feed strip does.
+    @State private var channelSearch = ""
+    @State private var channelPlatform: MediaPlatform?
+    @State private var channelToRemove: DirectoryChannel?
+    /// Whether the channel strip is folded away, so the feed gets its height.
+    ///
+    /// Persisted: a reader who folded the strip to read the feed does not want it
+    /// back on the next launch. Android keeps this in its hub state, for the same reason.
+    @AppStorage("media.channelStripHidden") private var channelStripHidden = false
     @State private var allFeedFilter = FeedFilter()
     @State private var profileFilter = FeedFilter(date: .allTime, watchStatus: .all)
 
@@ -154,7 +164,7 @@ struct MediaView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    channels
+                    if !channelStripHidden { channels }
                     feedHeader
                     if hiddenByProtection > 0 { protectionNote }
                     if searchOpen {
@@ -205,6 +215,20 @@ struct MediaView: View {
                 }.padding(.horizontal, 16).padding(.vertical, 12)
             }.background(Color.cvBackground).navigationTitle("Media")
                 .toolbar(.visible, for: .tabBar)
+                // Beside the "Media" title: fold the channel strip away so the feed
+                // gets the height. The feed's own actions — search, ⋮ — are in the
+                // feed header and stay put, because they are how the feed is USED
+                // rather than merely how it is navigated.
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { withAnimation { channelStripHidden.toggle() } } label: {
+                            Image(systemName: channelStripHidden ? "chevron.down" : "chevron.up")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                        .accessibilityLabel(channelStripHidden ? "Show channels" : "Hide channels")
+                        .accessibilityIdentifier("media.channels.toggle")
+                    }
+                }
                 .refreshable { await library.refresh() }
                 .task {
                     // Wire background-audio watch progress into THIS library. The
@@ -248,11 +272,7 @@ struct MediaView: View {
                 } message: { Text(unavailable ?? "") }
                 .alert("Remove channel?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })) {
                     Button("Remove", role: .destructive) {
-                        if let channel = pendingRemoval {
-                            library.subscribe(channel)
-                            if selectedChannel == channel.id { selectedChannel = nil }
-                            Task { await library.refresh() }
-                        }
+                        if let channel = pendingRemoval { removeChannel(channel) }
                         pendingRemoval = nil
                     }
                     Button("Cancel", role: .cancel) { pendingRemoval = nil }
@@ -306,6 +326,21 @@ struct MediaView: View {
                             VStack(spacing: 7) {
                                 CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 50).padding(3)
                                     .overlay(Circle().stroke(selectedChannel == channel.id ? Color.cvPrimary : Color.clear, lineWidth: 2))
+                                    // Silenced badge, so "notifications off" is visible without
+                                    // opening the channel list. A muted channel still refreshes and
+                                    // still appears in the feed — only its notifications are off —
+                                    // so this is a state, not a hidden channel.
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if library.isChannelMuted(channel.id) {
+                                            Image(systemName: "bell.slash.fill")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundStyle(Color.cvOnSurfaceVariant)
+                                                .frame(width: 19, height: 19)
+                                                .background(Color.cvSurface, in: Circle())
+                                                .overlay(Circle().stroke(Color.cvOutlineVariant, lineWidth: 1))
+                                                .accessibilityLabel("Notifications muted for \(channel.displayName)")
+                                        }
+                                    }
                                 Text(channel.displayName).font(.caption.weight(.semibold)).lineLimit(1).frame(width: 68)
                             }
                             .contentShape(Rectangle())
@@ -477,22 +512,59 @@ struct MediaView: View {
         .padding(14).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
     }
 
-    /// A video's ⋮ menu, the same four things on every card in the tab —
-    /// Android's `VideoCardMenu`.
+    /// The app's offline audio, so a card can offer the download its own state calls for.
+    private var downloads: AudioDownloads { .shared }
+
+    /// A video's ⋮ menu, the same five things on every card in the tab — Android's
+    /// `VideoCardMenu`.
     ///
-    /// "Add to playlist…" opens the picker sheet rather than nesting a submenu,
-    /// which is what it replaced: a `Menu` cannot show a playlist's video count
-    /// and has nowhere to put "New playlist with this video".
+    /// **Add to playlist, Hide video, Hide channel, Download audio, Share** — and nothing
+    /// else. What was here and is deliberately gone is "Save video": saving is a decision
+    /// about the shelf, made on the shelf, and a card's ⋮ is where a hand reaches to make
+    /// the card GO AWAY, not to keep it. Android's menu has never carried it for the same
+    /// reason.
+    ///
+    /// "Add to playlist…" opens the picker sheet rather than nesting a submenu: a `Menu`
+    /// cannot show a playlist's video count and has nowhere to put "New playlist with this
+    /// video".
     private func videoMenu(_ video: LibraryVideo) -> some View {
         Menu {
             Button("Add to playlist…", systemImage: "text.badge.plus") { addToPlaylistVideo = video }
-            Button(library.state.saved.contains(video) ? "Unsave video" : "Save video", systemImage: "bookmark") {
-                library.toggleSave(video)
-            }
             Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
+            // Only where hiding a channel is a thing this screen does — not inside
+            // one channel's own feed, where every card is that channel and the menu
+            // drops the entry (Android's `onHideChannel`).
+            if selectedChannel == nil, !(video.channelID ?? "").isEmpty {
+                Button("Hide channel", systemImage: "person.crop.circle.badge.xmark") {
+                    library.hideChannel(video.channelID ?? "")
+                }
+            }
+            // A live broadcast has no finished audio to save, and a text or photo
+            // post has no audio at all — both would offer a button that could only
+            // fail.
+            if video.live != true && !video.isPost { downloadMenuButton(video) }
             ShareLink(item: video.url)
         } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 44, height: 44).background(.black.opacity(0.25), in: Circle()) }
             .accessibilityLabel("Options for \(video.title)")
+    }
+
+    /// The one download entry, under the label its state calls for — Android's
+    /// `downloadMenuLabel`: "Download audio", "Cancel download", "Delete download".
+    ///
+    /// One slot rather than three, because a reader who taps it is answering the same
+    /// question every time ("what is this video's audio doing?") and the answer is what
+    /// the label reports.
+    @ViewBuilder
+    private func downloadMenuButton(_ video: LibraryVideo) -> some View {
+        if downloads.isDownloaded(video.id) {
+            Button("Delete download", systemImage: "trash", role: .destructive) {
+                if let item = downloads.item(for: video.id) { downloads.remove(item) }
+            }
+        } else if downloads.isDownloading(video.id) {
+            Button("Cancel download", systemImage: "xmark.circle") { downloads.cancel(video.id) }
+        } else {
+            Button("Download audio", systemImage: "arrow.down.to.line") { downloads.download(video) }
+        }
     }
 
     private func open(_ video: LibraryVideo) {
@@ -511,12 +583,122 @@ struct MediaView: View {
         return videos.filter { seen.insert($0.id).inserted }
     }
 
+    /// Unsubscribes, and leaves the channel's own feed if that is where the reader was.
+    private func removeChannel(_ channel: DirectoryChannel) {
+        library.subscribe(channel)
+        if selectedChannel == channel.id { selectedChannel = nil }
+        Task { await library.refresh() }
+    }
+
+    /// All channels — Android's `ChannelDirectorySheet`, and the same things in the
+    /// same order: a search field, the platform chips, the way IN first (adding is
+    /// what a reader looks for when a channel is missing, and on an empty list it is
+    /// the only useful thing on the screen), then every subscription with its bell
+    /// and its ✕.
     private var channelManager: some View {
         NavigationStack {
-            List(library.state.channels) { channel in
-                HStack { CVAvatar(name: channel.displayName, url: channel.iconUrl); VStack(alignment: .leading) { Text(channel.displayName); Text(channel.platformLabel).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant) }; Spacer(); Button("Open") { showChannels = false; selectedChannel = channel.id } }
-            }.navigationTitle("All channels").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showChannels = false } } }
+            VStack(alignment: .leading, spacing: 12) {
+                CVSearchField(text: $channelSearch, prompt: "Search channels", identifier: "channels.search")
+                HStack(spacing: 6) {
+                    CVChip(title: "All", selected: channelPlatform == nil) { channelPlatform = nil }
+                    ForEach(MediaPlatform.allCases, id: \.self) { platform in
+                        CVChip(title: platform.label, selected: channelPlatform == platform) {
+                            channelPlatform = channelPlatform == platform ? nil : platform
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        Button { showChannels = false; showAddChannel = true } label: {
+                            Label("Add channel", systemImage: "plus")
+                                .font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 12)
+                                .background(Color.cvSurfaceContainer, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("channels.add")
+
+                        if filteredChannels.isEmpty {
+                            Text(channelSearch.isEmpty
+                                 ? "No channels yet. Add one to see its uploads here."
+                                 : "No channel matches “\(channelSearch)”")
+                                .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 20)
+                        }
+                        ForEach(filteredChannels) { channel in channelCard(channel) }
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.top, 8)
+            .background(Color.cvBackground)
+            .navigationTitle("All channels").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showChannels = false } } }
+            .alert("Remove channel?", isPresented: Binding(get: { channelToRemove != nil }, set: { if !$0 { channelToRemove = nil } })) {
+                Button("Remove", role: .destructive) {
+                    if let channel = channelToRemove { removeChannel(channel) }
+                    channelToRemove = nil
+                }
+                Button("Cancel", role: .cancel) { channelToRemove = nil }
+            } message: { Text("Remove \(channelToRemove?.displayName ?? "this channel") from your subscriptions? Saved videos and playlists are kept.") }
         }
+        .tint(.cvPrimary)
+    }
+
+    /// The channels the list shows: the chosen platform, then the search text over the
+    /// name or the handle — Android's filter, field for field, including the handle
+    /// (a reader searching for a channel they know the @ of should not have to remember
+    /// what it renamed itself to).
+    private var filteredChannels: [DirectoryChannel] {
+        let wanted = channelPlatform.map { MediaChannelIdentity.platform($0.rawValue) }
+        return library.state.channels.filter { channel in
+            (wanted == nil || MediaChannelIdentity.platform(channel.platform) == wanted)
+                && (channelSearch.isEmpty
+                    || channel.displayName.localizedCaseInsensitiveContains(channelSearch)
+                    || channel.handle.localizedCaseInsensitiveContains(channelSearch))
+        }
+    }
+
+    /// One channel: its face and platform, a bell for its notifications, and a ✕ that
+    /// unsubscribes.
+    ///
+    /// The bell is PER CHANNEL and independent of every other channel and of the
+    /// source: a filled bell means this channel notifies, a struck-through one means it
+    /// is silenced. It sits beside the ✕ so "silence" and "unsubscribe" are two clearly
+    /// different actions rather than one destructive tap — Android, word for word.
+    private func channelCard(_ channel: DirectoryChannel) -> some View {
+        HStack(spacing: 4) {
+            Button { showChannels = false; selectedChannel = channel.id } label: {
+                HStack(spacing: 12) {
+                    CVAvatar(name: channel.displayName, url: channel.iconUrl, size: 46)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(channel.displayName).font(.subheadline.bold()).lineLimit(1)
+                        Text(channel.platformLabel).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain)
+            Button { library.toggleChannelNotifications(channel) } label: {
+                Image(systemName: library.isChannelMuted(channel.id) ? "bell.slash" : "bell.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(library.isChannelMuted(channel.id)
+                                     ? Color.cvOnSurfaceVariant.opacity(0.6) : Color.cvPrimary)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(library.isChannelMuted(channel.id)
+                                ? "Unmute notifications for \(channel.displayName)"
+                                : "Mute notifications for \(channel.displayName)")
+            .accessibilityIdentifier("channels.notifications")
+            Button { channelToRemove = channel } label: {
+                Image(systemName: "xmark").font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.cvOnSurfaceVariant).frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(channel.displayName)")
+            .accessibilityIdentifier("channels.remove")
+        }
+        .padding(.leading, 10).padding(.trailing, 2)
+        .background(Color.cvSurfaceVariant, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var hiddenChannels: some View {

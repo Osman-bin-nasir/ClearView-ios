@@ -16,6 +16,13 @@ final class GoodPostScreenModel {
     var session: AdminSession?
     var ownedChannels: [GoodPostChannel] = []
     var channelAds: [GoodPostAd] = []
+    /// The address of a creator who signed in to an account that already existed, until the greeting
+    /// that names it is dismissed (§16).
+    ///
+    /// Held on the screen rather than in the sheet so it is shown over whatever the session landed
+    /// on — the sheet is gone by the time it appears, which is the point: the greeting is about the
+    /// tab in front of them, not about the form they just left.
+    var welcomeEmail: String?
     private let defaults: UserDefaults
 
     var canCreateChannel: Bool { session == nil || session?.isSuperAdmin == true }

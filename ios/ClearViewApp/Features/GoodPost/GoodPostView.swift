@@ -8,12 +8,25 @@ struct GoodPostView: View {
     @State private var showSearch = false
     @State private var showOptions = false
     @State private var showPublisher = false
+    /// Whether the sheet that is open should land on the channel form once there is a session.
+    ///
+    /// "Create a channel" and "Publisher studio" are the same sheet, and this is the one thing that
+    /// tells them apart: a reader who asked to create a channel should not be shown a list of the
+    /// channels they already run first.
+    @State private var publisherCreatesChannel = false
+    /// The channel an account that just signed in runs, opened once the sheet is out of the way.
+    @State private var pendingLandingChannelId: String?
     @State private var destination: HomeDestination?
     @State private var linkedChannel: GoodPostChannel?
     @Environment(Router.self) private var router
 
     private enum HomeDestination: String, Hashable, Identifiable {
-        case saved, starred, directory, sharedBlocklist, advertisements
+        /// The reader's list: what the directory holds, drawn as rows to follow.
+        case directory
+        /// The super administrator's manager for that same list — categories, subcategories and
+        /// the channels filed under them.
+        case directoryAdmin
+        case saved, starred, sharedBlocklist, advertisements
         var id: String { rawValue }
     }
 
@@ -61,7 +74,10 @@ struct GoodPostView: View {
                         }
                         if model.canCreateChannel {
                             Divider().padding(.top, 8)
-                            Button { showPublisher = true } label: {
+                            Button {
+                                publisherCreatesChannel = true
+                                showPublisher = true
+                            } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: "plus").foregroundStyle(GoodPostPalette.accent)
                                         .frame(width: 28, height: 28)
@@ -93,6 +109,17 @@ struct GoodPostView: View {
                     }
                 }
             }
+            .alert("Welcome back", isPresented: Binding(
+                get: { model.welcomeEmail != nil },
+                set: { if !$0 { model.welcomeEmail = nil } }
+            ), presenting: model.welcomeEmail) { _ in
+                Button("Continue") { model.welcomeEmail = nil }
+            } message: { email in
+                // The address is named because it is the one thing they can check: an account on a
+                // shared device, or the wrong one out of several, is exactly the mistake this
+                // sentence is able to catch.
+                Text("\(email) already has a channel account, so you are signed in. Your channels are below.")
+            }
             .task { await model.load() }
             .task(id: router.channelSlug) {
                 if let slug = router.channelSlug {
@@ -102,8 +129,29 @@ struct GoodPostView: View {
                     router.channelSlug = nil
                 }
             }
-            .sheet(isPresented: $showPublisher, onDismiss: { Task { await model.load() } }) {
-                PublisherStudioView(repository: model.repository)
+            .sheet(isPresented: $showPublisher, onDismiss: {
+                publisherCreatesChannel = false
+                Task {
+                    await model.load()
+                    // §16: an account that runs one channel lands IN it rather than on a list of one
+                    // — the destination Android's `landAdminSession` picks for a channel
+                    // administrator. Read from the reloaded state rather than from the session the
+                    // sheet handed back, so the channel opened is the one this device actually has.
+                    if let id = pendingLandingChannelId {
+                        pendingLandingChannelId = nil
+                        if let channel = model.homeChannels.first(where: { $0.id == id }) {
+                            linkedChannel = channel
+                        }
+                    }
+                }
+            }) {
+                PublisherStudioView(
+                    repository: model.repository,
+                    startCreating: publisherCreatesChannel
+                ) { landed, welcome in
+                    if let welcome { model.welcomeEmail = welcome }
+                    pendingLandingChannelId = landed.isSuperAdmin ? nil : landed.channelId
+                }
             }
             .navigationDestination(item: $linkedChannel) { ChannelFeedView(channel: $0, model: model) }
             .navigationDestination(item: $destination) { destination in
@@ -112,12 +160,13 @@ struct GoodPostView: View {
                     case .saved: GoodPostSavedChannelsView(model: model)
                     case .starred: GoodPostStarredView(channelId: nil, repository: model.repository)
                     case .directory: GoodPostDirectoryView(repository: model.repository)
+                    case .directoryAdmin: DirectoryAdminView(repository: model.repository)
                     case .advertisements: GoodPostAdsView(repository: model.repository)
-                    case .sharedBlocklist:
-                        ScrollView { ProtectionSharedListSheet(model: .shared).padding(16) }
-                            .background(Color.cvBackground)
-                            .navigationTitle("Shared blocklist")
-                            .task { await ProtectionModel.shared.syncGlobalRules() }
+                    // The shared blocklist as the platform maintains it: what the community has asked
+                    // for, what everyone is protected by, and what people say was wrongly blocked.
+                    // The reader-facing list this tab's own blocking rules come from is a different
+                    // thing and lives with the rest of the blocking settings.
+                    case .sharedBlocklist: GoodPostBrainRotView(repository: model.repository)
                     }
                 }.toolbar(.visible, for: .navigationBar)
             }
@@ -149,22 +198,38 @@ struct GoodPostView: View {
     private var homeOptions: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.canCreateChannel {
-                option("Create a channel") { showPublisher = true }
+                option("Create a channel") {
+                    publisherCreatesChannel = true
+                    showPublisher = true
+                }
             }
             if model.ownedChannels.count == 1, let channel = model.ownedChannels.first {
                 option("My Channel") { linkedChannel = channel }
             }
+            // The three platform surfaces. Only the role that holds the permission is offered
+            // them: the server refuses the rest, and a control that always fails is its own kind
+            // of lie. A channel administrator sees none of these — their channel is already on
+            // the list above, and the way in to a second one is not theirs to take.
             if model.session?.isSuperAdmin == true {
                 option("Advertisements") { destination = .advertisements }
+                option("Shared blocklist") { destination = .sharedBlocklist }
+                option("Channel directory") { destination = .directoryAdmin }
             }
-            option("Shared blocklist") { destination = .sharedBlocklist }
-            option("Channel directory") { destination = .directory }
             option("Refresh") { Task { await model.load() } }
             Menu {
                 Button("Saved channels", systemImage: "bookmark") { open(.saved) }
                 Button("Starred messages", systemImage: "star") { open(.starred) }
+                // A reader's view of the same list the administrator above maintains. Offered to
+                // the roles that cannot open the manager, which is the one thing it would
+                // otherwise duplicate.
+                if model.session?.isSuperAdmin != true {
+                    Button("Browse channel directory", systemImage: "list.bullet.rectangle") {
+                        open(.directory)
+                    }
+                }
                 Button("Publisher studio", systemImage: "square.and.pencil") {
                     showOptions = false
+                    publisherCreatesChannel = false
                     showPublisher = true
                 }
             } label: {

@@ -1,60 +1,70 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The publishing surface: the way in (§16), and what an account that is already signed in runs.
+///
+/// It is one sheet with three states rather than three screens, because the tab behind it is where
+/// the channels live — an administrator who signs in is not taken somewhere else, the list under
+/// this sheet simply becomes theirs. `startCreating` is what makes "Create a channel" mean the same
+/// thing whether the account is signed in or not: signed out it is the sign-in, signed in it is the
+/// form.
 struct PublisherStudioView: View {
     let repository: GoodPostRepository
+    /// True when the tab's "Create a channel" opened this, so a session lands on the form rather
+    /// than on a list of channels the account already runs.
+    var startCreating = false
+    /// Told the session that landed and, when the account was already here, its address.
+    var onLanded: (AdminSession, String?) -> Void = { _, _ in }
+
     @Environment(\.dismiss) private var dismiss
     @State private var session: AdminSession?
     @State private var channels: [GoodPostChannel] = []
-    @State private var email = ""
-    @State private var password = ""
     @State private var message: String?
     @State private var busy = false
-    @State private var showCreate = false
-    @State private var channelName = ""
-    @State private var accountMode = "Creator"
-    @State private var signUp = false
-    @State private var creatorToken: String?
+    @State private var creating = false
+    @State private var restoring = true
 
     var body: some View {
         NavigationStack {
             Group {
-                if let session { dashboard(session) }
-                else { signIn }
+                if restoring {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let session {
+                    dashboard(session)
+                } else {
+                    // The sign-in screen owns the whole sheet: it is the only place in the tab that
+                    // asks anybody who they are, and a chrome of its own around it would say this is
+                    // one step of a larger thing, which to a reader it is not.
+                    AdminSignInView(repository: repository) { landed, welcome in
+                        session = landed
+                        onLanded(landed, welcome)
+                        if startCreating { creating = true }
+                    }
+                }
             }
-            .background(Color.cvBackground).navigationTitle("Publisher studio").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .task { session = await repository.adminSession(); if session != nil { await loadChannels() } }
-            .alert("Create a channel", isPresented: $showCreate) {
-                TextField("Channel name", text: $channelName)
-                Button("Create") { Task { await createChannel() } }
-                Button("Cancel", role: .cancel) {}
+            .background(Color.cvBackground)
+            .navigationTitle(session == nil ? "Create a channel" : "Publisher studio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(session == nil ? "Cancel" : "Done") { dismiss() }
+                }
             }
-        }.tint(.cvPrimary)
-    }
-
-    private var signIn: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                CVEmptyState(title: "Share something good", message: "Sign in with your ClearView publisher account to manage your channels and publish updates.", symbol: "square.and.pencil")
-                VStack(spacing: 16) {
-                    Picker("Account type", selection: $accountMode) {
-                        Text("Creator").tag("Creator")
-                        Text("Administrator").tag("Administrator")
-                    }.pickerStyle(.segmented)
-                    TextField("Email", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Divider()
-                    SecureField("Password", text: $password).textContentType(.password)
-                    if accountMode == "Creator" { Toggle("Create a new account", isOn: $signUp).font(.subheadline) }
-                }.padding(20).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 18))
-                if let message { CVErrorBanner(message: message) }
-                Button { Task { await login() } } label: {
-                    HStack { if busy { ProgressView() }; Text(accountMode == "Creator" && signUp ? "Create account" : "Sign in").fontWeight(.semibold) }.frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent).controlSize(.large).disabled(busy || email.isEmpty || password.isEmpty)
-                Text("Reading channels is always available without an account. Publisher access is managed by ClearView.")
-                    .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant).multilineTextAlignment(.center)
-            }.padding(24)
+            .task {
+                session = await repository.adminSession()
+                if session != nil {
+                    if startCreating { creating = true }
+                    await loadChannels()
+                }
+                restoring = false
+            }
+            .sheet(isPresented: $creating, onDismiss: { Task { await loadChannels() } }) {
+                ChannelFormView(channel: nil, isSuperAdmin: true, repository: repository) { created in
+                    if !channels.contains(where: { $0.id == created.id }) { channels.append(created) }
+                }
+            }
         }
+        .tint(.cvPrimary)
     }
 
     private func dashboard(_ session: AdminSession) -> some View {
@@ -69,7 +79,7 @@ struct PublisherStudioView: View {
                 }
                 if busy { ProgressView() }
                 if channels.isEmpty && !busy { Text("No channels are assigned to this account.") }
-                if session.isSuperAdmin { Button("Create a channel", systemImage: "plus") { showCreate = true } }
+                if session.isSuperAdmin { Button("Create a channel", systemImage: "plus") { creating = true } }
             }
             Section {
                 Button("Sign out", role: .destructive) {
@@ -84,59 +94,12 @@ struct PublisherStudioView: View {
         }.scrollContentBackground(.hidden).refreshable { await loadChannels() }
     }
 
-    private func login() async {
-        busy = true
-        defer { busy = false; password = "" }
-        if accountMode == "Creator" {
-            guard let token = await repository.creatorToken(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password, signUp: signUp) else {
-                message = "Couldn't sign in. Check your email, password, and connection. New accounts need a password of at least 6 characters."
-                return
-            }
-            let result = await repository.creatorLogin(idToken: token)
-            switch result {
-            case .ok(.session(let value)):
-                session = value
-                message = nil
-                await loadChannels()
-            case .ok(.needsChannel):
-                creatorToken = token
-                showCreate = true
-                message = nil
-            case .failed, .unreachable: message = result.userMessage
-            }
-            return
-        }
-        let result = await repository.adminLogin(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
-        password = ""
-        if let value = result.value { session = value; message = nil; await loadChannels() }
-        else { message = result.userMessage }
-        busy = false
-    }
-
     private func loadChannels() async {
         busy = true
         let result = await repository.adminChannels()
         if let value = result.value { channels = value; message = nil }
         else { message = result.userMessage }
         busy = false
-    }
-
-    private func createChannel() async {
-        let name = channelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        if let creatorToken {
-            let result = await repository.creatorCreateChannel(idToken: creatorToken, name: name)
-            if let value = result.value {
-                session = value
-                self.creatorToken = nil
-                message = nil
-                await loadChannels()
-            } else { message = result.userMessage }
-            return
-        }
-        let result = await repository.adminCreateChannel(body: ["name": name])
-        if result.isOk { channelName = ""; await loadChannels() }
-        else { message = result.userMessage }
     }
 }
 
@@ -191,9 +154,9 @@ struct PostComposerView: View {
     let repository: GoodPostRepository
     /// The draft the channel feed's strip already holds, when this was opened from it.
     ///
-    /// The strip is an editable field, so the pencil beside it is not a way in from nothing — it
-    /// is the same draft given the whole screen. Starting a new post here would have deleted the
-    /// line the reader had just typed.
+    /// The strip is an editable field, so the pencil beside it is not a way in from nothing — it is
+    /// the same draft given the whole screen. Starting a new post here would have deleted the line
+    /// the reader had just typed.
     let initialText: String
     /// Told when a post actually published, so the strip can clear the draft it was holding.
     let onPublished: (() -> Void)?

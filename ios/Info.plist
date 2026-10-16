@@ -20,6 +20,10 @@
         <string>digitalkhatt_indopak.otf</string>
         <string>scheherazade_new.ttf</string>
         <string>jetbrains_mono_variable.ttf</string>
+        <!-- The face the Good Post artwork is lettered in, so the mark and the
+             wordmark under it read as one lock-up rather than a picture with a
+             caption. -->
+        <string>amatic_sc.ttf</string>
     </array>
     <key>GoodPostBaseURL</key>
     <string>https://clearview-1neb.onrender.com</string>

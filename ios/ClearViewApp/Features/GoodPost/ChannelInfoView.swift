@@ -182,7 +182,7 @@ struct ChannelInfoView: View {
         .task { await info.load() }
         .refreshable { await info.load() }
         .sheet(isPresented: $editing, onDismiss: { Task { await info.load() } }) {
-            ChannelEditView(
+            ChannelFormView(
                 channel: info.channel,
                 isSuperAdmin: model.session?.isSuperAdmin == true,
                 repository: model.repository
