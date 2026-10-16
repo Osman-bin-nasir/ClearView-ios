@@ -146,4 +146,109 @@ final class QuranSurahReaderTests: XCTestCase {
         XCTAssertGreaterThan(small, 0, "the marks need room above the baseline")
         XCTAssertEqual(large, small * 2, accuracy: 0.001, "the line box must scale with the type")
     }
+
+    // MARK: - Coverage: the face the corpus is actually written in
+
+    /// Al-Faatiha 1:1 as the `ara-quranindopak` edition writes it, including the
+    /// two marks the Mushaf face has no glyph for: U+06E1 (jazm) in `بِسۡمِ` and
+    /// U+0670 elsewhere.
+    private static let basmala =
+        "\u{0628}\u{0650}\u{0633}\u{06E1}\u{0645}\u{0650} \u{0627}\u{064E}\u{0644}\u{0644}\u{064E}\u{0647}\u{0650}"
+
+    /// Every substitution names a codepoint the Mushaf face really lacks, and
+    /// replaces it with one it really carries.
+    ///
+    /// This is the assertion that keeps the table honest in both directions. An
+    /// entry for a codepoint the face *does* carry would replace a correct glyph
+    /// with a different one — a silent change to scripture that no other check in
+    /// this file would notice, because the verse would still render.
+    func testSubstitutionsOnlyCoverCodepointsTheFaceLacks() throws {
+        let face = try XCTUnwrap(UIFont(name: QuranTypography.primaryFace, size: 30))
+        let covered = CTFontCopyCharacterSet(face as CTFont) as CharacterSet
+
+        for (uncovered, replacement) in QuranTypography.faceSubstitutions {
+            let code = String(uncovered.value, radix: 16, uppercase: true)
+            XCTAssertFalse(
+                covered.contains(uncovered),
+                "U+\(code) is carried by the Mushaf face, so rewriting it changes a correct glyph"
+            )
+            for scalar in replacement.unicodeScalars {
+                XCTAssertTrue(
+                    covered.contains(scalar),
+                    "the replacement for U+\(code) must be a codepoint the face carries"
+                )
+            }
+        }
+    }
+
+    /// The reader draws a verse as **one** run in the Mushaf face — the property
+    /// the whole substitution table exists to buy.
+    ///
+    /// CoreText starts a new run at every codepoint the face cannot draw, and each
+    /// run is shaped on its own, so a run boundary inside a word breaks the Arabic
+    /// joining and the letters come out detached. Without `drawableText` this verse
+    /// measures two runs, the second in the fallback face; with it, one run in the
+    /// Mushaf face. The attributed string is built with exactly the two calls
+    /// `SurahReaderView` makes, because a SwiftUI `Text` cannot be inspected.
+    func testAVerseLaysOutAsASingleRunInTheMushafFace() throws {
+        let source = Self.basmala
+        XCTAssertTrue(source.unicodeScalars.contains("\u{06E1}"), "the fixture must carry an uncovered mark")
+
+        let face = try XCTUnwrap(QuranTypography.uiFont(baseSize: QuranTypography.readerBaseSize, scale: 1))
+        let wordCount = source.split(separator: " ").count
+
+        func runs(in text: String) -> [CTRun] {
+            let attributed = NSAttributedString(string: text, attributes: [.font: face])
+            return CTLineGetGlyphRuns(CTLineCreateWithAttributedString(attributed)) as! [CTRun]
+        }
+        func faces(of runs: [CTRun]) -> Set<String> {
+            Set(runs.map { run in
+                let attributes = CTRunGetAttributes(run) as NSDictionary
+                let runFont = attributes[kCTFontAttributeName as String] as! CTFont
+                return CTFontCopyPostScriptName(runFont) as String
+            })
+        }
+
+        // The bug, pinned: the raw edition text splits into more runs than the
+        // verse has words and hands some of it to another face.
+        let raw = runs(in: source)
+        XCTAssertGreaterThan(
+            raw.count,
+            wordCount,
+            "an uncovered mark must be what splits the verse, or this test is not exercising the fix"
+        )
+        XCTAssertNotEqual(faces(of: raw), [QuranTypography.primaryFace])
+
+        // The fix: fewer, uninterrupted runs, every one of them the Mushaf face.
+        // The count is deliberately not pinned to the word count — CoreText splits
+        // whitespace into its own run in some shapes and not others, so the number
+        // is not the property. "No glyph falls to another face" is, and it is what
+        // stops a run boundary landing inside a word.
+        XCTAssertEqual(QuranTypography.drawableText(source), source.replacingOccurrences(of: "\u{06E1}", with: "\u{0652}"))
+        let fixed = runs(in: QuranTypography.drawableText(source))
+        XCTAssertLessThan(fixed.count, raw.count, "the substitutions must remove the run boundaries, not move them")
+        XCTAssertEqual(faces(of: fixed), [QuranTypography.primaryFace], "no glyph may fall to another face")
+    }
+
+    /// The verse the reader draws — text plus its end-of-ayah ornament — asks for
+    /// no face but the Mushaf one, so the ayah's number is drawn by the face the
+    /// verse is set in rather than by a system fallback.
+    func testTheOrnamentIsDrawnInTheMushafFace() throws {
+        let face = try XCTUnwrap(QuranTypography.uiFont(baseSize: 30, scale: 1))
+        let line = QuranTypography.drawableText("\u{0645}\u{06E1}\u{0646}")
+            + QuranTypography.ayahOrnament(12)
+        let attributed = NSAttributedString(string: line, attributes: [.font: face])
+        let runs = CTLineGetGlyphRuns(CTLineCreateWithAttributedString(attributed)) as! [CTRun]
+
+        XCTAssertFalse(runs.isEmpty, "the verse must draw something")
+        for run in runs {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            let runFont = attributes[kCTFontAttributeName as String] as! CTFont
+            XCTAssertEqual(
+                CTFontCopyPostScriptName(runFont) as String,
+                QuranTypography.primaryFace,
+                "the ornament is drawn in the verse's own face, not the system fallback"
+            )
+        }
+    }
 }

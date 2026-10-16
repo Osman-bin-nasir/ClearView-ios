@@ -6,7 +6,13 @@ struct MediaVideoPlayerView: View {
     let library: MediaLibrary
     @State private var player = YouTubePlayer()
     @State private var showSpeed = false
-    @State private var showPlaylists = false
+    /// The "Add to playlist" picker, opened from the ⋮ menu and the Playlist button.
+    @State private var showAddToPlaylist = false
+    /// "Reset Continue Watching" asks before it clears anything: this menu is one
+    /// careless tap away from the picture, and it throws away every resume position.
+    @State private var showResetContinue = false
+    /// What to say after a reset, in words — the row simply disappears otherwise.
+    @State private var message: String?
     @State private var limitation: String?
     @State private var downloads = AudioDownloads.shared
     @State private var audioPreparing = false
@@ -71,11 +77,22 @@ struct MediaVideoPlayerView: View {
             .navigationTitle(video.title).navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
-            .sheet(isPresented: $showPlaylists) { MediaPlaylistPicker(video: video, library: library) }
+            .sheet(isPresented: $showAddToPlaylist) { AddToPlaylistSheet(video: video, library: library) }
             .sheet(isPresented: $showAudioPlayer) { AudioPlayerView() }
             .alert("YouTube playback limitation", isPresented: Binding(get: { limitation != nil }, set: { if !$0 { limitation = nil } })) {
                 Button("OK", role: .cancel) { limitation = nil }
             } message: { Text(limitation ?? "") }
+            .alert("Reset Continue Watching?", isPresented: $showResetContinue) {
+                Button("Reset", role: .destructive) {
+                    message = MediaLibrary.resetContinueWatchingMessage(cleared: library.resetContinueWatching())
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears the resume position of every unfinished video, so Continue Watching starts over. Videos you finished keep their watched progress.")
+            }
+            .alert("Continue Watching", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                Button("OK", role: .cancel) { message = nil }
+            } message: { Text(message ?? "") }
             .onChange(of: player.position) { _, _ in saveProgress() }
             .onChange(of: player.playing) { _, playing in
                 if playing { hasPlayed = true }
@@ -87,16 +104,32 @@ struct MediaVideoPlayerView: View {
             .onDisappear { saveProgress(force: true); player.command("player.pauseVideo();") }
     }
 
+    /// The action row, and the ⋮ menu that carries what will not fit in it.
+    ///
+    /// The menu is Android's `VideoPlayerScreen` overflow: add to a playlist,
+    /// hide the video, mark it watched, and the two Continue Watching controls —
+    /// including the row-wide reset, which lives HERE rather than on the feed's
+    /// own ⋮ because it is a decision about what you were watching.
     private var actions: some View {
         HStack(alignment: .top, spacing: 0) {
             Menu {
+                Button("Add to playlist…", systemImage: "text.badge.plus") { showAddToPlaylist = true }
                 Button(library.state.saved.contains { $0.id == video.id } ? "Remove from saved videos" : "Save video", systemImage: "bookmark") { library.toggleSave(video) }
                 Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
+                // A live broadcast has no finite length to finish, so "watched"
+                // would have nothing to mean.
+                if video.live != true {
+                    Button("Mark as watched", systemImage: "checkmark.circle") {
+                        library.markWatched(video, duration: player.duration > 0 ? player.duration : Double(video.durationSeconds ?? 0))
+                    }
+                }
+                Divider()
+                Button("Reset Continue Watching", systemImage: "arrow.counterclockwise") { showResetContinue = true }
                 Button("Reload player", systemImage: "arrow.clockwise") { player.reload() }
             } label: { actionLabel("More", symbol: "ellipsis", vertical: true) }.accessibilityIdentifier("media.player.more")
             ShareLink(item: video.url) { actionLabel("Share", symbol: "square.and.arrow.up") }.accessibilityIdentifier("media.player.share")
             Button { showSpeed.toggle() } label: { actionLabel("Speed", symbol: "speedometer") }.accessibilityIdentifier("media.player.speed")
-            Button { showPlaylists = true } label: { actionLabel("Playlist", symbol: "text.badge.plus") }.accessibilityLabel("Add to Playlist").accessibilityIdentifier("media.player.playlist")
+            Button { showAddToPlaylist = true } label: { actionLabel("Playlist", symbol: "text.badge.plus") }.accessibilityLabel("Add to Playlist").accessibilityIdentifier("media.player.playlist")
         }.buttonStyle(.plain)
     }
 
@@ -271,48 +304,5 @@ struct MediaVideoPlayerView: View {
         let total = Int(max(0, seconds))
         if total >= 3600 { return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) }
         return String(format: "%02d:%02d", total / 60, total % 60)
-    }
-}
-
-struct MediaPlaylistPicker: View {
-    let video: LibraryVideo
-    @Bindable var library: MediaLibrary
-    @State private var showCreate = false
-    @State private var name = ""
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Button("Create playlist", systemImage: "plus") { showCreate = true }
-                if library.state.playlists.isEmpty { Text("Create a playlist to keep your videos together.").foregroundStyle(Color.cvOnSurfaceVariant) }
-                ForEach(library.state.playlists) { playlist in
-                    Button {
-                        library.add(video, to: playlist.id)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Image(systemName: "play.rectangle.on.rectangle").foregroundStyle(Color.cvPrimary)
-                            VStack(alignment: .leading) { Text(playlist.name); Text("\(playlist.videos.count) videos").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant) }
-                            Spacer()
-                            if playlist.videos.contains(where: { $0.id == video.id }) { Image(systemName: "checkmark") }
-                        }
-                    }.buttonStyle(.plain)
-                }
-            }.navigationTitle("Add to Playlist").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-                .alert("New playlist", isPresented: $showCreate) {
-                    TextField("Playlist name", text: $name)
-                    Button("Create and add") {
-                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        let playlist = MediaPlaylist(name: trimmed)
-                        library.state.playlists.append(playlist)
-                        library.add(video, to: playlist.id)
-                        dismiss()
-                    }
-                    Button("Cancel", role: .cancel) {}
-                }
-        }.tint(.cvPrimary)
     }
 }

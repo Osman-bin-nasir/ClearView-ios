@@ -16,6 +16,10 @@ struct MediaView: View {
     @State private var showChannels = false
     @State private var showAddChannel = false
     @State private var showPlaylists = false
+    /// The video whose "Add to playlist…" was tapped. A sheet rather than a
+    /// nested `Menu`: the picker shows each playlist's count and offers creating
+    /// one with this video, and a menu can carry neither.
+    @State private var addToPlaylistVideo: LibraryVideo?
     @State private var showFilters = false
     @State private var showHiddenVideos = false
     @State private var showHiddenChannels = false
@@ -222,7 +226,8 @@ struct MediaView: View {
                 .sheet(item: $browser) { BrowserSheet(url: $0.url) }
                 .sheet(isPresented: $showAdd) { AddMediaLinkView(library: library) }
                 .sheet(isPresented: $showAddChannel) { AddMediaChannelView(library: library) }
-                .sheet(isPresented: $showPlaylists) { MediaPlaylistsView(library: library) }
+                .sheet(isPresented: $showPlaylists) { MediaPlaylistsSheet(library: library) }
+                .sheet(item: $addToPlaylistVideo) { video in AddToPlaylistSheet(video: video, library: library) }
                 .sheet(isPresented: $showChannels) { channelManager }
                 .sheet(isPresented: $showFilters) { MediaFilterSheet(filter: filter) { filter = $0 } }
                 .sheet(isPresented: $showHiddenVideos) { videoCollection("Hidden videos", videos: (library.state.feed + library.state.saved).filter { (library.state.hiddenVideoIDs ?? []).contains($0.id) && (selectedChannel == nil || $0.channelID == selectedChannel) }, hidden: true) }
@@ -399,13 +404,7 @@ struct MediaView: View {
                         }
                 }.buttonStyle(.plain)
                 Menu {
-                    Button("Remove from Continue Watching") {
-                        if var progress = library.state.watchProgress?[video.id] {
-                            progress.dismissedFromContinue = true
-                            library.state.watchProgress?[video.id] = progress
-                            library.persist()
-                        }
-                    }
+                    Button("Remove from Continue Watching") { library.dismissFromContinue(video) }
                 } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).foregroundStyle(.white).frame(width: 44, height: 44) }
                     .accessibilityLabel("Continue Watching options")
             }
@@ -478,20 +477,20 @@ struct MediaView: View {
         .padding(14).background(Color.cvSurfaceContainer, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    /// A video's ⋮ menu, the same four things on every card in the tab —
+    /// Android's `VideoCardMenu`.
+    ///
+    /// "Add to playlist…" opens the picker sheet rather than nesting a submenu,
+    /// which is what it replaced: a `Menu` cannot show a playlist's video count
+    /// and has nowhere to put "New playlist with this video".
     private func videoMenu(_ video: LibraryVideo) -> some View {
         Menu {
-                Button(library.state.saved.contains(video) ? "Unsave video" : "Save video") { library.toggleSave(video) }
-                Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
-                if !library.state.playlists.isEmpty {
-                    Menu("Add to playlist") {
-                        ForEach(library.state.playlists) { playlist in
-                            Button(playlist.name) {
-                                if let index = library.state.playlists.firstIndex(where: { $0.id == playlist.id }), !library.state.playlists[index].videos.contains(where: { $0.id == video.id }) { library.state.playlists[index].videos.append(video); library.persist() }
-                            }
-                        }
-                    }
-                }
-                ShareLink(item: video.url)
+            Button("Add to playlist…", systemImage: "text.badge.plus") { addToPlaylistVideo = video }
+            Button(library.state.saved.contains(video) ? "Unsave video" : "Save video", systemImage: "bookmark") {
+                library.toggleSave(video)
+            }
+            Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
+            ShareLink(item: video.url)
         } label: { Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 44, height: 44).background(.black.opacity(0.25), in: Circle()) }
             .accessibilityLabel("Options for \(video.title)")
     }
@@ -630,66 +629,6 @@ struct AddMediaLinkView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") { if library.addLink(title: title, url: url) { dismiss() } else { invalid = true } }.disabled(url.isEmpty)
                     }
-                }
-        }.tint(.cvPrimary)
-    }
-}
-
-struct MediaPlaylistsView: View {
-    @Bindable var library: MediaLibrary
-    @Environment(\.dismiss) private var dismiss
-    @State private var showCreate = false
-    @State private var name = ""
-    @State private var browser: BrowserDestination?
-    @State private var playingVideo: LibraryVideo?
-
-    var body: some View {
-        NavigationStack {
-            List {
-                if library.state.playlists.isEmpty {
-                    CVEmptyState(title: "Your own little collections", message: "Create a playlist, then add videos from the feed menu.", symbol: "rectangle.stack")
-                        .listRowBackground(Color.clear)
-                }
-                ForEach(library.state.playlists) { playlist in
-                    NavigationLink {
-                        List(playlist.videos) { video in
-                            Button {
-                                library.open(video)
-                                if YouTubeLink.parse(video.url) != nil { playingVideo = video }
-                                else { browser = BrowserDestination(video.url) }
-                            } label: {
-                                Label(video.title, systemImage: "play.circle")
-                            }.contextMenu {
-                                Button("Remove from playlist", role: .destructive) {
-                                    if let index = library.state.playlists.firstIndex(where: { $0.id == playlist.id }) {
-                                        library.state.playlists[index].videos.removeAll { $0.id == video.id }; library.persist()
-                                    }
-                                }
-                            }
-                        }.navigationTitle(playlist.name)
-                    } label: {
-                        Label { VStack(alignment: .leading) {
-                            Text(playlist.name)
-                            Text("\(playlist.videos.count) videos").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-                        } } icon: { Image(systemName: "play.rectangle.on.rectangle").foregroundStyle(Color.cvPrimary) }
-                    }
-                }.onDelete { library.state.playlists.remove(atOffsets: $0); library.persist() }
-            }.scrollContentBackground(.hidden).background(Color.cvBackground).navigationTitle("Playlists")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                    ToolbarItem(placement: .primaryAction) { Button { showCreate = true } label: { Image(systemName: "plus") }.accessibilityLabel("New playlist") }
-                }
-                .alert("New playlist", isPresented: $showCreate) {
-                    TextField("Playlist name", text: $name)
-                    Button("Create") {
-                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty { library.state.playlists.append(MediaPlaylist(name: trimmed)); library.persist(); name = "" }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                }
-                .sheet(item: $browser) { BrowserSheet(url: $0.url) }
-                .navigationDestination(item: $playingVideo) { video in
-                    if let reference = YouTubeLink.parse(video.url) { MediaVideoPlayerView(video: video, reference: reference, library: library) }
                 }
         }.tint(.cvPrimary)
     }

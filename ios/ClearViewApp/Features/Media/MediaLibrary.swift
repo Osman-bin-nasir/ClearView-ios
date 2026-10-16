@@ -109,6 +109,16 @@ struct MediaLibraryState: Codable {
     var hiddenVideoIDs: [String]?
     var hiddenChannelIDs: [String]?
     var watchProgress: [String: MediaWatchProgress]?
+
+    /// YouTube playlists imported by URL, and their fetched videos.
+    ///
+    /// Optional, like the three above: the synthesized decoder does not fall back
+    /// to a property's default value for a key that is missing, so a non-optional
+    /// field added here would fail to decode every library written before it —
+    /// and the initialiser's `try?` would answer by silently resetting the whole
+    /// tab to empty.
+    var importedPlaylists: [ImportedPlaylist]?
+    var importedPlaylistVideos: [String: [LibraryVideo]]?
 }
 
 @MainActor
@@ -456,6 +466,123 @@ final class MediaLibrary {
         if state.watchProgress == nil { state.watchProgress = [:] }
         state.watchProgress?[video.id] = MediaWatchProgress(position: min(position, duration), duration: duration, updatedAt: Date(), dismissedFromContinue: false)
         persist()
+    }
+
+    /// Records the video as finished, so it leaves Continue Watching for good and
+    /// carries its Watched badge.
+    ///
+    /// Written as a full-length position rather than a separate flag, because that
+    /// is the one piece of state the row, the badge and the resume rule all read —
+    /// a second "watched" flag would be a second thing to keep in agreement.
+    func markWatched(_ video: LibraryVideo, duration: Double) {
+        guard video.live != true, duration.isFinite, duration > 0 else { return }
+        recordProgress(video, position: duration, duration: duration)
+    }
+
+    /// Empties Continue Watching and reports how many resume positions went.
+    ///
+    /// Android's `clearContinueWatching`: the resume positions of *unfinished* videos
+    /// are cleared, and so are the "removed from this row" markers, which are dead
+    /// state once the item they hid is gone. A FINISHED video keeps its progress
+    /// deliberately — that is the Watched badge and the full bar on its own card,
+    /// which is not what the reader asked to touch.
+    ///
+    /// The count is returned so the caller can say what happened rather than
+    /// leaving the reader to guess whether the tap did anything.
+    @discardableResult
+    func resetContinueWatching() -> Int {
+        guard let progress = state.watchProgress else { return 0 }
+        let cleared = progress.values.filter { $0.fraction < FeedFilters.watchedFractionThreshold }.count
+        state.watchProgress = progress.filter {
+            $0.value.fraction >= FeedFilters.watchedFractionThreshold && $0.value.dismissedFromContinue != true
+        }
+        persist()
+        return cleared
+    }
+
+    /// What to say after emptying Continue Watching, given how many resume
+    /// positions went.
+    ///
+    /// Android's `continueWatchingResetMessage`, word for word. The row simply
+    /// disappears, so without a sentence the tap reads as ambiguous — and "already
+    /// empty" is worth saying rather than leaving the reader to wonder whether it
+    /// worked at all.
+    /// `nonisolated` because it is pure text: nothing about the sentence depends
+    /// on the library, and a caller with only a count (a test, a notification)
+    /// should not have to reach the main actor for it.
+    nonisolated static func resetContinueWatchingMessage(cleared: Int) -> String {
+        switch cleared {
+        case ..<1: return "Continue Watching was already empty"
+        case 1: return "Cleared 1 resume position"
+        default: return "Cleared \(cleared) resume positions"
+        }
+    }
+
+    /// Takes one video out of Continue Watching without touching its progress.
+    /// The card's own menu, where "not this one" is a different intent from the
+    /// row-wide reset.
+    func dismissFromContinue(_ video: LibraryVideo) {
+        guard var progress = state.watchProgress?[video.id] else { return }
+        progress.dismissedFromContinue = true
+        state.watchProgress?[video.id] = progress
+        persist()
+    }
+
+    // MARK: - Imported YouTube playlists
+
+    var importedPlaylists: [ImportedPlaylist] { state.importedPlaylists ?? [] }
+
+    /// The videos last fetched for an imported playlist, if any.
+    func cachedPlaylistVideos(_ playlistId: String) -> [LibraryVideo] {
+        state.importedPlaylistVideos?[playlistId] ?? []
+    }
+
+    /// Imports a YouTube playlist by URL (or bare id) and caches its videos.
+    ///
+    /// Imports are keyed by playlist id, so re-importing the same link refreshes
+    /// the entry in place instead of adding a second copy of it.
+    @discardableResult
+    func importPlaylist(input: String) async throws -> ImportedPlaylist {
+        let imported = try await YouTubePlaylistImporter.fetch(input: input)
+        let record = ImportedPlaylist(
+            playlistId: imported.playlistId,
+            title: imported.title,
+            sourceRef: input.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        var list = state.importedPlaylists ?? []
+        if let index = list.firstIndex(where: { $0.playlistId == record.playlistId }) { list[index] = record }
+        else { list.append(record) }
+        state.importedPlaylists = list
+        state.importedPlaylistVideos?[record.playlistId] = imported.videos
+        persist()
+        return record
+    }
+
+    func removeImportedPlaylist(_ playlistId: String) {
+        state.importedPlaylists = (state.importedPlaylists ?? []).filter { $0.playlistId != playlistId }
+        state.importedPlaylistVideos?[playlistId] = nil
+        persist()
+    }
+
+    /// The playlist's videos, refetched from YouTube when nothing is cached.
+    ///
+    /// Only the *initial* page of a playlist is read, so a playlist longer than
+    /// the ~100 entries YouTube embeds shows its first hundred — said plainly here
+    /// rather than silently truncating, since the alternative (walking YouTube's
+    /// `youtubei/v1/browse` continuations) needs an API key and a request shape
+    /// that changes without notice.
+    func loadImportedPlaylist(_ playlist: ImportedPlaylist) async throws -> [LibraryVideo] {
+        if let cached = state.importedPlaylistVideos?[playlist.playlistId], !cached.isEmpty { return cached }
+        let reference = playlist.sourceRef.isEmpty ? playlist.playlistId : playlist.sourceRef
+        let refreshed = try await YouTubePlaylistImporter.fetch(input: reference)
+        state.importedPlaylistVideos?[playlist.playlistId] = refreshed.videos
+        var list = state.importedPlaylists ?? []
+        if let index = list.firstIndex(where: { $0.playlistId == playlist.playlistId }) {
+            list[index].title = refreshed.title
+            state.importedPlaylists = list
+        }
+        persist()
+        return refreshed.videos
     }
 
     func add(_ video: LibraryVideo, to playlistID: String) {

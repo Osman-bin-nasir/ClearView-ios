@@ -1,14 +1,12 @@
 import AVFoundation
-import AVKit
 import SwiftUI
 
 /// Shorts, one per screen, the next a swipe up and the previous a swipe down.
 ///
 /// This is the shape a vertical clip is watched in — YouTube's Shorts and
 /// Instagram's Reels are the same surface, and the feed's horizontal shelf is
-/// only the way in. A Short is not a video with a timeline, so this screen has
-/// no scrubber, no speed control and no progress bar; what it has instead is the
-/// thing a shelf cannot give it: the next clip arriving under the thumb.
+/// only the way in. What the pager has that a shelf cannot is the next clip
+/// arriving under the thumb.
 ///
 /// **One player, on the page that is showing.** A `WKWebView` and a YouTube
 /// iframe per Short in the list would be dozens of players for one screenful of
@@ -16,6 +14,15 @@ import SwiftUI
 /// page draws its thumbnail, and the player is dismantled when the page leaves
 /// (`EmbeddedYouTubePlayer.dismantleUIView` destroys the iframe), which is also
 /// what stops a Short playing on past the page it belongs to.
+///
+/// ## The transport
+///
+/// Each page carries a scrubber and a play/pause button of its own, for BOTH
+/// kinds of Short. A clip with no visible way to move through it reads as a
+/// still that happens to have sound, and the two sources are drawn by completely
+/// different machinery underneath — an iframe player for YouTube, an `AVPlayer`
+/// for a Reel — so the controls exist once, over both, rather than one source
+/// getting them and the other leaving the reader to the embed's own chrome.
 struct ShortsPagerView: View {
     let shorts: [LibraryVideo]
     let startAt: LibraryVideo
@@ -85,8 +92,10 @@ private struct ShortPage: View {
     @State private var player = YouTubePlayer()
     /// The native player, for a Reel or an X clip, whose stream is an mp4 rather
     /// than an embeddable YouTube video.
-    @State private var nativePlayer: AVPlayer?
+    @State private var playback: ShortPlayback?
     @State private var error: String?
+    /// The "Add to playlist" picker, opened from this page's ⋮ menu.
+    @State private var showAddToPlaylist = false
 
     private var youtubeReference: YouTubeRef? { YouTubeLink.parse(short.url) }
 
@@ -101,12 +110,12 @@ private struct ShortPage: View {
         // Resolved only when the page is in front of the reader: a stream URL for
         // every Short in the list would be a request per clip nobody has reached.
         .task(id: isActive) {
-            guard isActive, youtubeReference == nil, nativePlayer == nil else { return }
+            guard isActive, youtubeReference == nil, playback == nil else { return }
             do {
                 let url = try await SocialMediaStreamResolver.shared.resolve(short)
                 guard !Task.isCancelled else { return }
-                let resolved = AVPlayer(url: url)
-                nativePlayer = resolved
+                let resolved = ShortPlayback(url: url)
+                playback = resolved
                 resolved.play()
             } catch is CancellationError {
             } catch {
@@ -115,10 +124,16 @@ private struct ShortPage: View {
                 self.error = error.localizedDescription
             }
         }
+        // Resumed on the way back IN, not only the first time in. A page whose
+        // native player was already built returns early from the `.task` above,
+        // so that task cannot be what starts it again — and without this, leaving
+        // a Reel for a YouTube Short and coming back found it still paused. The
+        // YouTube path never showed the bug because its web view is rebuilt from
+        // nothing whenever the page becomes active.
         .onChange(of: isActive) { _, active in
-            if !active { nativePlayer?.pause() }
+            if active { playback?.play() } else { playback?.pause() }
         }
-        .onDisappear { nativePlayer?.pause() }
+        .onDisappear { playback?.pause() }
     }
 
     @ViewBuilder
@@ -130,8 +145,11 @@ private struct ShortPage: View {
             } else {
                 cover
             }
-        } else if let nativePlayer {
-            VideoPlayer(player: nativePlayer)
+        } else if let playback {
+            // The player layer alone, with no chrome of its own: the transport
+            // below is the only one on the page, so a Reel and a Short are driven
+            // the same way.
+            NativeVideoLayer(player: playback.player)
         } else {
             cover
         }
@@ -152,6 +170,22 @@ private struct ShortPage: View {
         }
         .clipped()
         .accessibilityHidden(true)
+    }
+
+    // MARK: - Transport state, whichever player is underneath
+
+    private var isYouTube: Bool { youtubeReference != nil }
+    private var timelinePosition: Double { isYouTube ? player.position : (playback?.position ?? 0) }
+    private var timelineDuration: Double { isYouTube ? player.duration : (playback?.duration ?? 0) }
+    private var isPlaying: Bool { isYouTube ? player.playing : (playback?.playing ?? false) }
+    private var canSeek: Bool { isYouTube ? player.canSeek : (playback?.canSeek ?? false) }
+
+    private func togglePlay() {
+        if isYouTube { player.togglePlay() } else { playback?.togglePlay() }
+    }
+
+    private func seek(to seconds: Double) {
+        if isYouTube { player.seek(to: seconds) } else { playback?.seek(to: seconds) }
     }
 
     private var overlay: some View {
@@ -179,6 +213,7 @@ private struct ShortPage: View {
                     Button(library.state.saved.contains(short) ? "Unsave" : "Save", systemImage: "bookmark") {
                         library.toggleSave(short)
                     }
+                    Button("Add to playlist…", systemImage: "text.badge.plus") { showAddToPlaylist = true }
                     Button("Hide", systemImage: "eye.slash") { library.hide(short) }
                     ShareLink(item: short.url)
                 } label: {
@@ -208,8 +243,17 @@ private struct ShortPage: View {
                 } else if player.buffering, youtubeReference != nil {
                     Text("Buffering…").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
                 }
+                ShortTransport(
+                    position: timelinePosition,
+                    duration: timelineDuration,
+                    playing: isPlaying,
+                    canSeek: canSeek,
+                    canToggle: isYouTube ? (player.ready && player.error == nil) : (playback != nil),
+                    onTogglePlay: togglePlay,
+                    onSeek: { seek(to: $0) }
+                )
             }
-            .padding(.horizontal, 16).padding(.bottom, 28)
+            .padding(.horizontal, 16).padding(.bottom, 20)
         }
         // The overlay is text and buttons over a video: a shadow keeps them
         // legible on a white frame without a scrim dimming the clip.
@@ -218,5 +262,164 @@ private struct ShortPage: View {
                            startPoint: .top, endPoint: .bottom)
         )
         .foregroundStyle(.white)
+        .sheet(isPresented: $showAddToPlaylist) {
+            AddToPlaylistSheet(video: short, library: library)
+        }
+    }
+}
+
+/// The clips's own timeline, over the clip: play/pause, how far in, a scrubber
+/// to move through it, and its length.
+///
+/// Deliberately two controls and not the embed's full chrome — a vertical clip
+/// has no room for a row of buttons, and the one thing a reader reaches for is
+/// "stop this" and "go back a bit".
+private struct ShortTransport: View {
+    let position: Double
+    let duration: Double
+    let playing: Bool
+    let canSeek: Bool
+    let canToggle: Bool
+    let onTogglePlay: () -> Void
+    let onSeek: (Double) -> Void
+
+    /// While the thumb is held the clip keeps playing underneath, so the slider
+    /// is bound to this instead of to `position` — otherwise the thumb is dragged
+    /// back out from under the finger by every progress update.
+    @State private var scrubbing = false
+    @State private var scrubValue: Double = 0
+
+    private var upper: Double { max(1, duration) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onTogglePlay) {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .background(.black.opacity(0.35), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canToggle)
+            .accessibilityLabel(playing ? "Pause" : "Play")
+            .accessibilityIdentifier("shorts.playPause")
+
+            Text(Self.clock(scrubbing ? scrubValue : position))
+                .font(.caption2.monospacedDigit()).frame(width: 38, alignment: .leading)
+
+            Slider(
+                value: Binding(
+                    get: { min(max(0, scrubbing ? scrubValue : position), upper) },
+                    set: { scrubValue = $0 }
+                ),
+                in: 0...upper,
+                onEditingChanged: { editing in
+                    if editing {
+                        scrubValue = position
+                        scrubbing = true
+                    } else {
+                        onSeek(scrubValue)
+                        scrubbing = false
+                    }
+                }
+            )
+            .tint(.white)
+            .disabled(!canSeek)
+            .accessibilityLabel("Seek")
+            .accessibilityIdentifier("shorts.timeline")
+
+            Text(canSeek ? Self.clock(duration) : "--:--")
+                .font(.caption2.monospacedDigit()).frame(width: 38, alignment: .trailing)
+        }
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "00:00" }
+        let total = Int(seconds)
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+}
+
+/// A native Short's video, drawn with no chrome of its own.
+///
+/// `VideoPlayer` would bring AVKit's control bar — a second transport, with a
+/// second play button, one tap away from the one this page draws. An
+/// `AVPlayerLayer` is the picture and nothing else.
+private struct NativeVideoLayer: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerLayerView {
+        let view = PlayerLayerView()
+        view.playerLayer.videoGravity = .resizeAspectFill
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerLayerView, context: Context) {
+        uiView.playerLayer.player = player
+    }
+
+    final class PlayerLayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
+
+/// A Reel's or X clip's `AVPlayer`, plus the position, length and playing state a
+/// transport needs to read.
+///
+/// `AVPlayer` publishes none of those, and `VideoPlayer` used to hide the fact:
+/// with AVKit's own controls on screen nothing else had to know where playback
+/// was. Drawing our own bar over the picture moves that responsibility here, so
+/// the pager can show one transport over both sources.
+@MainActor
+@Observable
+final class ShortPlayback {
+    let player: AVPlayer
+    private(set) var position: Double = 0
+    private(set) var duration: Double = 0
+    private(set) var playing = false
+
+    /// True once the item reports a duration, which is what makes the timeline
+    /// meaningful — seeking a stream whose length is not known yet would jump to
+    /// an arbitrary point.
+    var canSeek: Bool { duration > 0 }
+
+    @ObservationIgnored private var timeObserver: Any?
+
+    init(url: URL, interval: Double = 0.25) {
+        player = AVPlayer(url: url)
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: interval, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            // The observer is registered on the main queue, so this is the main
+            // actor by construction; `assumeIsolated` states it to the compiler
+            // rather than hopping and arriving late.
+            MainActor.assumeIsolated { self?.refresh(at: time) }
+        }
+    }
+
+    deinit {
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+    }
+
+    func play() { player.play() }
+
+    func pause() { player.pause() }
+
+    func togglePlay() { playing ? pause() : play() }
+
+    func seek(to seconds: Double) {
+        guard canSeek, seconds.isFinite else { return }
+        player.seek(to: CMTime(seconds: min(duration, max(0, seconds)), preferredTimescale: 600))
+    }
+
+    private func refresh(at time: CMTime) {
+        if time.seconds.isFinite { position = max(0, time.seconds) }
+        if let itemDuration = player.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
+            duration = itemDuration
+        }
+        playing = player.timeControlStatus == .playing
     }
 }

@@ -617,11 +617,11 @@ private struct SurahBasmala: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if !basmala.isEmpty {
-                Text(basmala)
-                    .font(QuranTypography.font(
-                        baseSize: Self.basmalaBaseSize,
-                        scale: arabicTextScale
-                    ))
+                QuranTypography.arabic(
+                    basmala,
+                    baseSize: Self.basmalaBaseSize,
+                    scale: arabicTextScale
+                )
                     .lineSpacing(QuranTypography.lineSpacing(
                         baseSize: Self.basmalaBaseSize,
                         scale: arabicTextScale
@@ -690,13 +690,31 @@ private struct AyahVerse: View {
     }
 
     private var scripture: some View {
+        // Both halves go through `QuranTypography.arabic` rather than one shared
+        // `.font` below the concatenation: the ornament is scripture too, and a
+        // surface that set the face only on the verse would draw the ayah's own
+        // number in the system font.
         (
-            Text(ayah.arabic + "  ").foregroundStyle(Color.cvOnSurface)
-            + Text(QuranTypography.ayahOrnament(ayah.id))
+            QuranTypography.arabic(
+                ayah.arabic + "  ",
+                baseSize: QuranTypography.readerBaseSize,
+                scale: arabicTextScale
+            )
+                .foregroundStyle(Color.cvOnSurface)
+            + QuranTypography.arabic(
+                QuranTypography.ayahOrnament(ayah.id),
+                baseSize: QuranTypography.readerBaseSize,
+                scale: arabicTextScale
+            )
                 .foregroundStyle(isBookmarked ? Color.cvPrimary : Color.cvOnSurfaceVariant)
         )
-        .font(QuranTypography.font(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
-        .lineSpacing(QuranTypography.lineSpacing(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
+        // The line box is set on the concatenation, not inside `arabic`:
+        // `lineSpacing` is a `View` modifier, so this is the only place that can
+        // space the verse and its ornament as one paragraph.
+        .lineSpacing(QuranTypography.lineSpacing(
+            baseSize: QuranTypography.readerBaseSize,
+            scale: arabicTextScale
+        ))
         .multilineTextAlignment(.center)
         .environment(\.layoutDirection, .rightToLeft)
         .frame(maxWidth: .infinity)
