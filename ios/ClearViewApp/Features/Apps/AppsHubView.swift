@@ -34,10 +34,6 @@ struct AppsHubView: View {
                                     shortcut(name: site.name) { AppBrandMark(site: site, size: 56) } action: { selectedApp = site }
                                         .accessibilityLabel("Open \(site.name)")
                                 }
-                                shortcut(name: "Add shortcut") {
-                                    Image(systemName: "plus").font(.system(size: 25, weight: .medium)).foregroundStyle(Color.cvPrimary)
-                                        .frame(width: 56, height: 56).background(Color.cvSurfaceContainerHigh, in: Circle())
-                                } action: { showShortcut = true }
                                 ForEach(library.shortcuts) { item in
                                     shortcut(name: item.name) {
                                         Text(String(item.name.prefix(1)).uppercased()).font(.title2.weight(.semibold))
@@ -48,6 +44,10 @@ struct AppsHubView: View {
                                         Button("Remove shortcut", systemImage: "trash", role: .destructive) { library.removeShortcut(item.id) }
                                     }
                                 }
+                                shortcut(name: "Add shortcut") {
+                                    Image(systemName: "plus").font(.system(size: 25, weight: .medium)).foregroundStyle(Color.cvPrimary)
+                                        .frame(width: 56, height: 56).background(Color.cvSurfaceContainerHigh, in: Circle())
+                                } action: { showShortcut = true }
                             }
                         }
                         RoundedRectangle(cornerRadius: 2).fill(Color.cvSurfaceContainerLow.opacity(0.65))
