@@ -36,10 +36,9 @@ struct AppsHubView: View {
                                 }
                                 ForEach(library.shortcuts) { item in
                                     shortcut(name: item.name) {
-                                        Text(String(item.name.prefix(1)).uppercased()).font(.title2.weight(.semibold))
-                                            .foregroundStyle(Color.cvPrimary).frame(width: 56, height: 56)
-                                            .background(Color.cvSurfaceContainerHigh, in: Circle())
+                                        BrowserShortcutIcon(shortcut: item)
                                     } action: { open(item.url) }
+                                    .accessibilityLabel(item.name)
                                     .contextMenu {
                                         Button("Remove shortcut", systemImage: "trash", role: .destructive) { library.removeShortcut(item.id) }
                                     }
