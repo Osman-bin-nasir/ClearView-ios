@@ -1,13 +1,9 @@
 import SwiftUI
 
-/// The four-tab shell.
+/// The five-tab shell, with the in-app websites beside the curated Media feed.
 ///
-/// The tabs mirror the Android app exactly — Quran, Media, Good Post, More, in
-/// that order — with its own labels (`quran_tab`, `media_tab`, `goodpost_tab`,
-/// `more_tab`) and marks of the same weight: an open book, a screen with a play
-/// triangle, a megaphone and an ellipsis. Android's comment on the first two is
-/// the reason for the pairing: the row reads as one set of marks only if each has
-/// the same silhouette.
+/// Quran, Media, Apps, Good Post and More share the Android palette and native
+/// navigation. Apps adds persistent, filtered website sessions to the iOS shell.
 ///
 /// The bar is styled as Android builds it — `surface` at 62% opacity over a
 /// transparent background, the selected item in the accent with its label, the
@@ -36,6 +32,10 @@ struct RootView: View {
             MediaView()
                 .tabItem { Label("Media", systemImage: "play.rectangle.fill") }
                 .tag(Router.Tab.media)
+
+            AppsHubView()
+                .tabItem { Label("Apps", systemImage: "square.grid.2x2.fill") }
+                .tag(Router.Tab.apps)
 
             GoodPostView()
                 .tabItem { Label("Good Post", systemImage: "megaphone.fill") }

@@ -87,6 +87,8 @@ extension Color {
 
 extension UIColor {
 
+    static let cvBackground = UIColor.cvDynamic(dark: 0x0F1514, light: 0xEDF1EF)
+
     /// The bottom bar's container: the theme's own `surface` at 62% opacity, on
     /// top of a transparent bar.
     ///

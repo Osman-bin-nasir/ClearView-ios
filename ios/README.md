@@ -1,6 +1,6 @@
 # ClearView for iOS
 
-A native SwiftUI app for iPhone and iPad (iOS 18+), using the ClearView Android app and supplied screen recording as the design reference. Four tabs share an adaptive teal palette, native navigation, searchable lists, rounded cards, sheets, and persistent preferences.
+A native SwiftUI app for iPhone and iPad (iOS 18+), using the ClearView Android app and supplied screen recording as the design reference. Five tabs share an adaptive teal palette, native navigation, searchable lists, rounded cards, sheets, and persistent preferences.
 
 ## Run
 
@@ -15,11 +15,22 @@ A native SwiftUI app for iPhone and iPad (iOS 18+), using the ClearView Android 
 | --- | --- |
 | Quran | Verse-first home, Arabic and English, previous/next/random verse, copy, Alafasy recitation, Hijri date, searchable 114-surah library, reading position, bookmarks, text sizing, and reminder settings |
 | Media | Live curated directory, YouTube RSS subscriptions, Instagram and X profile feeds, Shorts filter, search, custom channel URLs, saved web links, recently opened videos, local playlists, share and remove actions, and offline audio (listen mode + downloads) |
+| Apps | In-app mobile YouTube and Instagram, persistent website sessions, native app navigation/search, per-app keyword filters, optional Shorts/Reels hiding, shared Protection rules, page sharing and reload |
 | Good Post | Live channel catalogue, categories, discovery, verified badges, channel posts, images/video/documents, pagination, cached reads, follows, reactions, local bookmarks, and channel deep links |
 | Publisher studio | Creator email/password registration and login, first-channel creation, administrator login, channel list, text/link/file publishing, attachment upload, post deletion, and sign-out |
 | More | Todo creation/editing/completion, temporary and daily schedules, priority/sort/search/history, weekly completion chart, daily target, persistent Dhikr counter with targets/custom phrases/haptics, focus countdown, light/dark/system appearance |
 
 Empty libraries start empty: the app never invents personal tasks, watch progress, followers, or posts. Use **Media → Explore** to add channels, or **+** to save a link. Good Post reads public data immediately and falls back to cached content with a visible retry message when offline.
+
+### Apps
+
+Apps sits immediately beside Media. Its YouTube and Instagram cards open full-screen mobile websites inside ClearView, with a native app header, search sheet, shield/filter button and bottom tabs. The original website header/navigation is hidden on service pages so there is one set of controls; authentication pages retain their original layout and show their domain. The websites keep their real feeds, subscriptions, messaging and account controls. YouTube uses Home, Shorts, Subscriptions and You tabs; Instagram uses Home, Search, Reels and Profile. An empty YouTube home page offers a native search-first landing screen, while populated feeds remain available. Website state is retained in memory between visits and WebKit's persistent data store retains cookies/local storage between launches. Credentials are entered on the service's own HTTPS pages; ClearView's filtering code never reads form values or cookies. Playback pauses on closing the browser or backgrounding.
+
+Shorts/Reels are **allowed by default**. Each app's filter sheet accepts up to 100 editable words/phrases/creator names, persisted separately, with optional complete short-video blocking. The adult keyword tier also applies; enabled shared Protection rules remain authoritative. Matching uses the existing native keyword engine over rendered card titles/captions/image descriptions/creator names. It does not classify video images/audio or guarantee detection of every unwanted video. The isolated WebKit script observes dynamically loaded feed cards and page changes, submits bounded metadata batches to the local matcher, and hides matching cards while pausing their media. “Hide Shorts”/“Hide Reels” removes the native short-video tab immediately, hides website button-based and link-based entry points and entire short-video shelves, and intercepts direct/SPA short-video routes. Turning it off restores the tab. The shield count reflects matched items in the current browser session, not a fabricated activity metric.
+
+Website deep links for supported routes stay inside Apps. Other user-tapped external links offer an explicit handoff; automatic redirects cannot launch another app. Authentication pages are left intact. Google restricts embedded-browser sign-in, so YouTube's signed-in flow is **not guaranteed**: the app offers sign-in help and a Safari option without claiming that Safari's session transfers to WebKit. No user-agent spoofing or authentication cookie import is used. Site markup may change, so feed/reel selectors and actual account flows need on-device verification.
+
+No automated tests were written or run for Apps. The Debug simulator build passes with Xcode 26.3 on the iPhone 16 Pro / iOS 26.3.1 runtime. Manual simulator verification confirmed that YouTube renders with one native header/navigation bar, enabling Hide Shorts removes the Shorts tab, disabling it restores the tab, and enabling it again removes it. The hidden Shorts shelf heading and overlapping website category strip were also removed. Native YouTube tabs load their destination directly rather than simulating clicks on hidden website controls; the signed-in You tab was manually verified to render the profile, History, Playlists and account controls. Signed-in YouTube/Instagram flows, keyword matches on actual feed/reel layouts, keyboard/safe-area layout, and background behavior still need verification.
 
 ### Quran reader controls
 
@@ -78,6 +89,8 @@ Audio mode resolves that URL and hands it to `AudioPlaybackController`, an `AVPl
 Quran editions download on first use, then read from cache. Recitation and external media require a connection. While iOS suspends the app, repeating Quran reminders show the last loaded verse; the verse refreshes on the next app visit. Store distribution, APNs, Universal Links, and Firebase project configuration require the project's Apple/Firebase owner setup.
 
 ## Validation
+
+Local setup now includes Xcode 26.3, the iOS SDK, Metal tools and an iPhone 16 Pro simulator. The Debug simulator build and app launch were verified on 21 October 2026 with signing disabled for the simulator. Earlier feature-specific notes about unavailable Xcode describe validation performed before this installation. Unit and UI suites were not run in this build session.
 
 ```sh
 ./gradlew -p shared jvmTest
