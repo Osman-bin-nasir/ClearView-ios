@@ -3,128 +3,152 @@ import SwiftUI
 struct AppsHubView: View {
     @State private var library = AppsLibrary()
     @State private var selectedApp: AppSite?
-    @State private var settingsApp: AppSite?
+    @State private var showSettings = false
+    @State private var showShortcut = false
+    @State private var address = ""
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    introduction
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("YOUR APPS").font(.caption.weight(.semibold)).tracking(1.5)
-                            Spacer()
-                            Text("2 apps").font(.caption)
-                        }.foregroundStyle(Color.cvOnSurfaceVariant)
-                        ForEach(AppSite.allCases) { site in
-                            launchCard(site)
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("ClearView").font(.system(size: 45, weight: .light)).tracking(-1.8)
+                                    .foregroundStyle(Color.cvOnSurface)
+                                Text("A calmer way to browse").font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.cvOnSurfaceVariant)
+                            }
+                            Spacer(minLength: 8)
+                            Button { showSettings = true } label: {
+                                Image(systemName: "gearshape.fill").font(.system(size: 21))
+                                    .foregroundStyle(Color.cvOnSurfaceVariant).frame(width: 44, height: 50)
+                            }.accessibilityLabel("Protection settings").accessibilityIdentifier("apps.protection-settings")
                         }
-                    }
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "lock.shield").foregroundStyle(Color.cvPrimary).font(.title3)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Your account stays yours").font(.subheadline.weight(.semibold))
-                            Text("Sign in on each app’s own website. Saved sessions stay on this device, ready for your next visit.")
-                                .font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
-                                .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 22) {
+                            Text("Apps").font(.subheadline.weight(.medium))
+                                .padding(.horizontal, 16).padding(.vertical, 8)
+                                .background(Color.cvSurfaceContainerLow, in: Capsule())
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), alignment: .leading, spacing: 24) {
+                                ForEach([AppSite.google, .youtube, .instagram]) { site in
+                                    shortcut(name: site.name) { AppBrandMark(site: site, size: 56) } action: { selectedApp = site }
+                                        .accessibilityLabel("Open \(site.name)")
+                                }
+                                shortcut(name: "Add shortcut") {
+                                    Image(systemName: "plus").font(.system(size: 25, weight: .medium)).foregroundStyle(Color.cvPrimary)
+                                        .frame(width: 56, height: 56).background(Color.cvSurfaceContainerHigh, in: Circle())
+                                } action: { showShortcut = true }
+                                ForEach(library.shortcuts) { item in
+                                    shortcut(name: item.name) {
+                                        Text(String(item.name.prefix(1)).uppercased()).font(.title2.weight(.semibold))
+                                            .foregroundStyle(Color.cvPrimary).frame(width: 56, height: 56)
+                                            .background(Color.cvSurfaceContainerHigh, in: Circle())
+                                    } action: { open(item.url) }
+                                    .contextMenu {
+                                        Button("Remove shortcut", systemImage: "trash", role: .destructive) { library.removeShortcut(item.id) }
+                                    }
+                                }
+                            }
                         }
-                    }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 20))
-                }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+                        RoundedRectangle(cornerRadius: 2).fill(Color.cvSurfaceContainerLow.opacity(0.65))
+                            .frame(height: max(90, min(200, geometry.size.height * 0.25)))
+                            .padding(.top, 6).accessibilityHidden(true)
+                        Spacer(minLength: 24)
+                    }.padding(.horizontal, 26).padding(.top, 26)
+                        .frame(minHeight: geometry.size.height, alignment: .top)
+                }.scrollDismissesKeyboard(.interactively)
             }
-            .background(Color.cvBackground)
-            .navigationTitle("Apps")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(Color.cvBackground, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        ForEach(AppSite.allCases) { site in
-                            Button("\(site.name) filters", systemImage: "slider.horizontal.3") { settingsApp = site }
-                        }
-                    } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("App filters")
-                }
-            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { webSearch.padding(.horizontal, 26).padding(.vertical, 18).background(Color.cvBackground) }
+            .background(Color.cvBackground).toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(item: $selectedApp) { site in
                 AppBrowserView(session: library.session(for: site), library: library)
             }
-            .sheet(item: $settingsApp) { site in
-                AppFilterSettingsView(site: site, library: library)
-            }
+            .sheet(isPresented: $showSettings) { BrowserProtectionSettingsView(library: library) }
+            .sheet(isPresented: $showShortcut) { AddBrowserShortcutView(library: library) }
         }
     }
 
-    private var introduction: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("ON YOUR TERMS", systemImage: "sparkle")
-                .font(.caption2.weight(.bold)).tracking(1.8).foregroundStyle(Color.cvPrimary)
-            Text("The apps you love.\nA little less noise.")
-                .font(.system(size: 29, weight: .bold, design: .rounded)).tracking(-0.6)
-                .foregroundStyle(Color.cvOnSurface).fixedSize(horizontal: false, vertical: true)
-            Text("Your real feeds, messages and subscriptions, with room for what matters to you.")
-                .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant).lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-            Label("Keyword filters built in", systemImage: "checkmark.shield.fill")
-                .font(.caption.weight(.medium)).foregroundStyle(Color.cvOnPrimaryContainer)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.cvPrimaryContainer, in: Capsule())
-        }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 26).fill(
-                    LinearGradient(colors: [Color.cvPrimary.opacity(0.13), Color.cvSurfaceContainerLow],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing))
-            }
-            .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(Color.cvPrimary.opacity(0.12), lineWidth: 1))
+    private var webSearch: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").foregroundStyle(Color.cvOnSurfaceVariant)
+            TextField("Search the web", text: $address).font(.subheadline.weight(.semibold))
+                .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.go).onSubmit(submit)
+                .accessibilityIdentifier("apps.web-search")
+            Button(action: submit) { Image(systemName: "arrow.right").font(.system(size: 20)).frame(width: 32, height: 38) }
+                .accessibilityLabel("Search or open website").disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }.padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 6)
+            .foregroundStyle(Color.cvOnSurface).background(Color.cvBackground, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.cvOutline.opacity(0.8), lineWidth: 1.5))
     }
 
-    private func launchCard(_ site: AppSite) -> some View {
-        let prefs = library.preferences(for: site)
-        let blocksShortVideos = library.blocksShortVideos(for: site)
-        return VStack(spacing: 0) {
-            Button { selectedApp = site } label: {
-                HStack(spacing: 16) {
-                    AppBrandMark(site: site, size: 56)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(site.name).font(.title3.weight(.bold)).foregroundStyle(Color.cvOnSurface)
-                        Text(site.subtitle).font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "arrow.up.right").font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.cvPrimary)
-                }.padding(20).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("Open \(site.name)")
-            Rectangle().fill(Color.cvOutlineVariant.opacity(0.45)).frame(height: 0.5).padding(.horizontal, 20)
-            Button { settingsApp = site } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: blocksShortVideos ? "eye.slash" : "line.3.horizontal.decrease")
-                        .foregroundStyle(Color.cvPrimary)
-                    Text(blocksShortVideos ? "\(site.shortVideoName) hidden" : "\(site.shortVideoName) allowed")
-                    Text("·").foregroundStyle(Color.cvOutline)
-                    Text(prefs.keywords.isEmpty ? "Add keywords" : "\(prefs.keywords.count) keywords")
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
-                }.font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-                    .padding(.horizontal, 20).padding(.vertical, 14).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("\(site.name) filters")
-        }.background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 24))
-            .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(Color.cvOutlineVariant.opacity(0.3), lineWidth: 0.5))
+    private func shortcut<Icon: View>(name: String, @ViewBuilder icon: () -> Icon, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 9) {
+                icon()
+                Text(name).font(.system(size: 11, weight: .semibold)).lineLimit(2).multilineTextAlignment(.center)
+                    .foregroundStyle(Color.cvOnSurfaceVariant)
+            }.frame(maxWidth: .infinity, minHeight: 83, alignment: .top).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func submit() {
+        guard let url = AppsLibrary.browserURL(address) else { return }
+        open(url)
+        address = ""
+    }
+    private func open(_ url: URL) {
+        library.session(for: .web).open(url)
+        selectedApp = .web
     }
 }
 
 struct AppBrandMark: View {
     let site: AppSite
     var size: CGFloat = 40
-
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.28).fill(
-                LinearGradient(colors: site == .youtube
-                    ? [Color(red: 1, green: 0.23, blue: 0.27), Color(red: 0.8, green: 0.06, blue: 0.12)]
-                    : [Color(red: 0.56, green: 0.27, blue: 0.89), Color(red: 0.91, green: 0.25, blue: 0.49), Color(red: 1, green: 0.67, blue: 0.28)],
-                    startPoint: .topTrailing, endPoint: .bottomLeading))
-            Image(systemName: site == .youtube ? "play.rectangle.fill" : "camera")
-                .font(.system(size: size * 0.52, weight: .semibold)).foregroundStyle(.white)
+            Circle().fill(.white)
+            switch site {
+            case .google, .web:
+                Text("G").font(.system(size: size * 0.59, weight: .bold, design: .rounded))
+                    .foregroundStyle(AngularGradient(colors: [.blue, .green, .yellow, .red, .blue], center: .center))
+            case .youtube:
+                Image(systemName: "play.rectangle.fill").font(.system(size: size * 0.52)).foregroundStyle(.red)
+            case .instagram:
+                Image(systemName: "camera").font(.system(size: size * 0.51, weight: .medium))
+                    .foregroundStyle(LinearGradient(colors: [.purple, .pink, .orange], startPoint: .topTrailing, endPoint: .bottomLeading))
+            }
         }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+private struct AddBrowserShortcutView: View {
+    let library: AppsLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var address = ""
+    private var url: URL? {
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value.contains("://") ? value : "https://" + value),
+              url.scheme == "https", let host = url.host, host.contains("."), !host.contains(" ") else { return nil }
+        return url
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name", text: $name).textInputAutocapitalization(.words)
+                TextField("Website address", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                Text("Your browser protection applies to this shortcut too.").font(.footnote).foregroundStyle(Color.cvOnSurfaceVariant)
+            }.scrollContentBackground(.hidden).background(Color.cvBackground)
+                .navigationTitle("Add shortcut").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Add") {
+                            if let url { library.addShortcut(name: String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32)), url: url); dismiss() }
+                        }.disabled(url == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || library.shortcuts.count >= 24)
+                    }
+                }
+        }.tint(.cvPrimary).presentationDetents([.medium])
     }
 }

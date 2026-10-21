@@ -1,9 +1,13 @@
 (() => {
   'use strict';
   const site = clearViewInitial.site;
-  const isYouTube = site === 'youtube';
-  const domain = isYouTube ? 'youtube.com' : 'instagram.com';
-  if (location.hostname !== domain && !location.hostname.endsWith('.' + domain)) return;
+  const host = location.hostname;
+  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com');
+  const isInstagram = host === 'instagram.com' || host.endsWith('.instagram.com');
+  const isGoogle = /^(?:www\.|m\.)?google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host);
+  const isService = isYouTube || isInstagram;
+  const domain = isYouTube ? 'youtube.com' : isInstagram ? 'instagram.com' : host;
+  if (location.protocol !== 'https:') return;
   let config = clearViewInitial;
   let running = false;
   let lastURL = '';
@@ -13,7 +17,7 @@
   const documentID = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const tracked = new Map();
   const elementIDs = new WeakMap();
-  const home = isYouTube ? 'https://m.youtube.com/' : 'https://www.instagram.com/';
+  const home = isYouTube ? 'https://m.youtube.com/' : isInstagram ? 'https://www.instagram.com/' : 'https://www.google.com/';
   const cardSelector = isYouTube
     ? 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-video-renderer,ytm-compact-video-renderer,ytm-grid-video-renderer,ytm-reel-item-renderer,ytm-shorts-lockup-view-model,ytm-shorts-lockup-view-model-v2,yt-shorts-lockup-view-model,ytd-rich-item-renderer,ytd-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer,ytm-reel-video-renderer,ytd-reel-video-renderer'
     : 'article,[role="listitem"]';
@@ -23,7 +27,7 @@
   const shortPath = value => {
     try {
       const url = new URL(value, location.href);
-      if (url.hostname !== domain && !url.hostname.endsWith('.' + domain)) return false;
+      if (!isService || (url.hostname !== domain && !url.hostname.endsWith('.' + domain))) return false;
       return isYouTube ? /^\/shorts(?:\/|$)/i.test(url.pathname) : /^\/reels?(?:\/|$)/i.test(url.pathname);
     } catch (_) { return false; }
   };
@@ -31,8 +35,10 @@
   const text = (element, max = 4500) => {
     if (!element) return '';
     // Never read input values, editable text, cookies, storage or request bodies.
-    const visible = (element.textContent || '').slice(0, max);
-    const labels = Array.from(element.querySelectorAll('img[alt],a[title]')).slice(0, 8)
+    const snapshot = element.cloneNode(true);
+    snapshot.querySelectorAll('form,input,textarea,select,[contenteditable="true"]').forEach(node => node.remove());
+    const visible = (snapshot.textContent || '').slice(0, max);
+    const labels = Array.from(snapshot.querySelectorAll('img[alt],a[title]')).slice(0, 8)
       .map(node => node.getAttribute('alt') || node.getAttribute('title') || '').join(' ');
     return (visible + ' ' + labels).slice(0, max);
   };
@@ -42,9 +48,9 @@
   style.id = 'clearview-app-style';
   style.textContent = `
     html { -webkit-tap-highlight-color:rgba(99,218,203,.16); }
-    html[data-cv-dark="true"] { color-scheme:dark; background:#0f1514; }
-    html[data-cv-dark="true"] body { background-color:#0f1514; }
-    html[data-cv-dark="true"] {
+    html[data-cv-dark="true"][data-cv-service="true"] { color-scheme:dark; background:#0f1514; }
+    html[data-cv-dark="true"][data-cv-service="true"] body { background-color:#0f1514; }
+    html[data-cv-dark="true"][data-cv-service="true"] {
       --yt-spec-base-background:#0f1514; --yt-spec-raised-background:#1c2422;
       --yt-spec-menu-background:#1c2422; --yt-spec-text-primary:#f1f5f4;
       --yt-spec-text-secondary:#aebeb9; --yt-spec-brand-background-primary:#0f1514;
@@ -52,7 +58,22 @@
       --ig-primary-text:241,245,244; --ig-secondary-text:174,190,185;
       --ig-separator:44,55,52; --ig-elevated-background:28,36,34;
     }
-    [data-cv-hidden="true"] { display:none!important; }
+    html[data-cv-remove-blocked="true"] [data-cv-hidden="true"] { display:none!important; }
+    html[data-cv-remove-blocked="false"] [data-cv-hidden="true"] { position:relative!important; pointer-events:none!important; }
+    html[data-cv-remove-blocked="false"] [data-cv-hidden="true"] > * { visibility:hidden!important; }
+    html[data-cv-remove-blocked="false"] [data-cv-hidden="true"]::after {
+      content:'Hidden by your protection';position:absolute;inset:0;z-index:1;display:flex;
+      align-items:center;justify-content:center;background:#192321;color:#aebeb9;
+      font:14px -apple-system,BlinkMacSystemFont,sans-serif;min-height:48px;
+    }
+    html[data-cv-hide-google-categories="true"] [data-cv-search-category="true"],
+    html[data-cv-block-ads="true"] ytm-ad-slot-renderer,
+    html[data-cv-block-ads="true"] ytm-promoted-sparkles-web-renderer,
+    html[data-cv-block-ads="true"] ytm-promoted-video-renderer,
+    html[data-cv-block-ads="true"] ytd-ad-slot-renderer,
+    html[data-cv-block-ads="true"] ytd-promoted-sparkles-web-renderer,
+    html[data-cv-block-ads="true"] .video-ads,
+    html[data-cv-block-ads="true"] .ytp-ad-overlay-container { display:none!important; }
     [data-cv-review="pending"] { visibility:hidden!important; }
     html[data-cv-app-shell="true"] [data-cv-web-chrome="true"],
     html[data-cv-app-shell="true"] ytm-pivot-bar-renderer,
@@ -101,8 +122,12 @@
     if (!document.documentElement) return;
     if (!style.isConnected) (document.head || document.documentElement).append(style);
     document.documentElement.dataset.cvDark = String(config.dark);
-    document.documentElement.dataset.cvHideShorts = String(config.blockShorts);
-    document.documentElement.dataset.cvAppShell = String(Boolean(config.appShell) && !isAuthenticationPage());
+    document.documentElement.dataset.cvService = String(isService);
+    document.documentElement.dataset.cvHideShorts = String(isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false);
+    document.documentElement.dataset.cvAppShell = String(Boolean(config.appShell) && isService && !isAuthenticationPage());
+    document.documentElement.dataset.cvRemoveBlocked = String(config.removeBlockedCards !== false);
+    document.documentElement.dataset.cvHideGoogleCategories = String(isGoogle && config.hideGoogleCategories);
+    document.documentElement.dataset.cvBlockAds = String(isYouTube && config.blockAds);
   }
 
   function route() {
@@ -113,7 +138,7 @@
       send({kind:'route'});
       tracked.forEach(value => { value.fingerprint = ''; });
     }
-    const blocked = config.blockShorts && shortPath(location.href);
+    const blocked = (isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false) && shortPath(location.href);
     let cover = document.getElementById('clearview-short-route-cover');
     if (blocked) {
       pause(document);
@@ -135,6 +160,7 @@
   }
 
   function markAppChrome() {
+    if (!isService) return;
     const selector = isYouTube
       ? 'ytm-pivot-bar-renderer,ytm-pivot-bar-view-model,ytm-mobile-topbar-renderer,ytm-mobile-topbar-renderer-v2,ytd-masthead,#masthead-container'
       : 'nav,[role="navigation"],[role="banner"]';
@@ -157,9 +183,11 @@
   }
 
   function hideShortLinks() {
+    if (!isService) return;
     // Navigation is not necessarily an anchor: YouTube's pivot items often
     // contain buttons and Instagram also uses role=button controls.
     document.querySelectorAll('[data-cv-short-nav]').forEach(node => node.removeAttribute('data-cv-short-nav'));
+    document.querySelectorAll('[data-cv-short-shelf]').forEach(node => node.removeAttribute('data-cv-short-shelf'));
     const selector = 'a[href],button[aria-label],button[title],[role="button"][aria-label],[role="tab"],ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model,[tab-identifier],[data-tab-identifier]';
     document.querySelectorAll(selector).forEach(element => {
       if (!shortControl(element)) return;
@@ -189,12 +217,56 @@
     }
   }
 
+  function filterGoogleCategories() {
+    if (!isGoogle) return;
+    // Mark category controls, not result links or search inputs. Marking is
+    // reversible so disabling the preference restores existing categories.
+    document.querySelectorAll('[data-cv-search-category]').forEach(node => node.removeAttribute('data-cv-search-category'));
+    document.querySelectorAll('[role="navigation"] a,[role="navigation"] [role="button"],[role="tablist"] a,[role="tab"],#hdtb a,#hdtb button,#hdtb [role="button"],header a,header button').forEach(node => {
+      const label = (node.getAttribute('aria-label') || node.textContent || '').trim();
+      if (/^All$/i.test(label)) return;
+      const anchor = node.closest('a[href]') || node.querySelector('a[href]');
+      let category = false;
+      try {
+        const url = new URL(anchor?.href || '', location.href);
+        category = url.hostname === host && url.pathname === '/search' && (url.searchParams.has('tbm') || url.searchParams.has('udm'));
+      } catch (_) { /* Not a category URL. */ }
+      if (category || /^(?:Images|Videos|Short videos|News|Shopping|Maps|Books|Flights|Finance|Forums|Web|AI Mode|More|Search tools|Tools)$/i.test(label)) {
+        (node.closest('[role="tab"]') || node).setAttribute('data-cv-search-category', 'true');
+      }
+    });
+    document.querySelectorAll('a,button,span,[role="button"]').forEach(node => {
+      const label = (node.textContent || '').trim();
+      if (/^(?:Search tools|Feedback)$/i.test(label) && !node.closest('#rso,article')) {
+        (node.closest('a,button,[role="button"]') || node).setAttribute('data-cv-search-category', 'true');
+      }
+    });
+    // Mobile category chips can live outside navigation landmarks.
+    document.querySelectorAll('a[href*="tbm="],a[href*="udm="]').forEach(anchor => {
+      if (anchor.closest('main,#search,#rso,article') || anchor.querySelector('h3')) return;
+      const label = (anchor.textContent || '').trim();
+      if (label && label.length < 35 && !/^All$/i.test(label)) anchor.setAttribute('data-cv-search-category', 'true');
+    });
+  }
+
+  function skipVideoAds() {
+    if (!isYouTube || !config.blockAds || !running) return;
+    const player = document.querySelector('.html5-video-player.ad-showing,.html5-video-player.ad-interrupting,#movie_player.ad-showing');
+    if (!player) return;
+    const skip = player.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,button[class*="ad-skip"]');
+    if (skip) skip.click();
+    const video = player.querySelector('video');
+    if (video && Number.isFinite(video.duration) && video.duration > 0 && video.currentTime < video.duration - 0.05) {
+      try { video.currentTime = video.duration; } catch (_) { /* Non-seekable ads may still offer Skip. */ }
+    }
+  }
+
   function describe(element, detail = false) {
     const links = Array.from(element.querySelectorAll('a[href]'));
     if (element.matches('a[href]')) links.unshift(element);
     const link = links.find(anchor => isYouTube
       ? /\/(watch|shorts|live)(?:[/?]|$)/.test(anchor.getAttribute('href') || '')
-      : /\/(p|reels?)\//.test(anchor.getAttribute('href') || ''));
+      : isInstagram ? /\/(p|reels?)\//.test(anchor.getAttribute('href') || '') : true);
     const creatorLink = links.find(anchor => isYouTube
       ? /\/(?:@|channel\/|c\/)/.test(anchor.getAttribute('href') || '')
       : /^\/[a-zA-Z0-9_.]+\/?$/.test(anchor.getAttribute('href') || ''));
@@ -227,6 +299,9 @@
     route();
     markAppChrome();
     hideShortLinks();
+    filterGoogleCategories();
+    skipVideoAds();
+    if (isAuthenticationPage() || ['accounts.google.com','consent.google.com','myaccount.google.com'].includes(host)) return;
     const emptyHome = isYouTube && location.pathname === '/' && /Try searching to get started/i.test(document.body.textContent || '');
     const pageState = location.href + ':' + emptyHome;
     if (pageState !== lastPageState) {
@@ -239,10 +314,23 @@
       const metadata = document.querySelector('ytm-slim-video-metadata-renderer,ytm-watch-metadata,ytm-video-description-header-renderer,#above-the-fold');
       if (metadata || document.title) queue(document.body, describe(metadata || document.body, true), items);
     }
+    if (!isService && document.title) queue(document.body, {text:document.title.slice(0, 4500),creator:'',url:location.href,short:false,detail:true}, items);
     const cards = Array.from(document.querySelectorAll(cardSelector));
+    if (isGoogle && location.pathname === '/search') {
+      document.querySelectorAll('a h3').forEach(heading => {
+        const anchor = heading.closest('a');
+        let card = anchor;
+        let parent = anchor?.parentElement;
+        for (let depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) {
+          if (parent.matches('main,body,#main,#search,#rso') || parent.querySelectorAll('a h3').length > 1) break;
+          if (parent.matches('.g,.MjjYud,.tF2Cxc,[data-sokoban-container]')) card = parent;
+        }
+        if (card && !card.closest('form,[role="dialog"]') && !cards.includes(card)) cards.push(card);
+      });
+    }
     // Instagram Explore uses grid links instead of articles. Find the image-bearing
     // tile, not its surrounding grid, so one match cannot hide an entire profile.
-    if (!isYouTube) {
+    if (isInstagram) {
       document.querySelectorAll('a[href^="/p/"],a[href^="/reel/"],a[href^="/reels/"]').forEach(anchor => {
         if (!anchor.closest('article,[role="listitem"]') && anchor.querySelector('img,video')) cards.push(anchor);
       });
@@ -271,7 +359,7 @@
       const rect = card.getBoundingClientRect();
       if (!card.hasAttribute('data-cv-hidden') && (rect.top > innerHeight * 3 || rect.bottom < -innerHeight)) continue;
       const description = describe(card);
-      if (!isYouTube && shortPath(location.href) && card.querySelector('video')) description.short = true;
+      if (isInstagram && shortPath(location.href) && card.querySelector('video')) description.short = true;
       queue(card, description, items);
     }
     for (const [id, entry] of tracked) {
@@ -342,6 +430,8 @@
       route();
       markAppChrome();
       hideShortLinks();
+      filterGoogleCategories();
+      skipVideoAds();
       schedule();
     },
     resolve,
@@ -375,12 +465,23 @@
   document.addEventListener('click', event => {
     const anchor = event.target.closest?.('a[href]');
     const control = event.target.closest?.('button,[role="button"],[role="tab"],ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model');
-    if (config.blockShorts && ((anchor && shortPath(anchor.href)) || (control && shortControl(control)))) {
+    const blocksShorts = isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false;
+    if (blocksShorts && ((anchor && shortPath(anchor.href)) || (control && shortControl(control)))) {
       event.preventDefault(); event.stopImmediatePropagation();
     }
   }, true);
+  document.addEventListener('click', event => {
+    if (!running || !event.isTrusted || isAuthenticationPage()) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest('a,button,input,textarea,select,label,summary,video,audio,iframe,canvas,[role="button"],[role="tab"],[role="link"],[role="dialog"],[role="alertdialog"],[contenteditable="true"],[data-cv-hidden]')) return;
+    if (window.getSelection()?.toString()) return;
+    // Text, feed cards and player surfaces are not whitespace.
+    if (target.closest('article,[role="listitem"],ytm-rich-item-renderer,ytm-video-with-context-renderer,.html5-video-player')) return;
+    if (Array.from(target.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())) return;
+    send({kind:'whitespaceTap', url:location.href});
+  }, true);
   document.addEventListener('play', event => {
-    if (!running || (config.blockShorts && shortPath(location.href)) || detailCover?.isConnected
+    if (!running || ((isYouTube ? config.blockShorts : config.blockReels) && shortPath(location.href)) || detailCover?.isConnected
         || event.target.closest?.('[data-cv-hidden="true"],[data-cv-review="pending"]')) event.target.pause?.();
   }, true);
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(document); });
@@ -388,7 +489,7 @@
   window.addEventListener('popstate', schedule);
   // SPA history updates happen in the site's own world. Observe its resulting URL,
   // rather than replacing history methods used by login or the site's router.
-  setInterval(() => { if (running) { route(); schedule(); } }, 1200);
+  setInterval(() => { if (running) { route(); skipVideoAds(); schedule(); } }, 800);
   // Install structural CSS before the first paint, rather than waiting for the
   // whole page to load and briefly showing a second header/bottom bar.
   if (document.documentElement) mount();
