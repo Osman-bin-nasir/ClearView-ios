@@ -8,6 +8,10 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
     private(set) var ready = false
     private(set) var playing = false
     private(set) var buffering = false
+    /// The video reached its end (state 0). A live broadcast that ends reports
+    /// this too, which is how Haramayn Live knows the stream is over rather than
+    /// showing a frozen "Live · playing" caption.
+    private(set) var finished = false
     private(set) var muted = false
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
@@ -50,6 +54,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
         case "ready":
             ready = true
             error = nil
+            finished = false
             requiresDirectPlay = false
             status = "Tap Play to start"
         case "snapshot":
@@ -61,6 +66,7 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
             if let state = data["state"] as? Int {
                 playing = state == 1
                 buffering = state == 3
+                finished = state == 0
                 switch state {
                 case 1: requiresDirectPlay = false; status = "Playing"
                 case 2: status = "Paused"
@@ -100,9 +106,24 @@ final class YouTubePlayer: NSObject, WKScriptMessageHandler, WKNavigationDelegat
         ready = false
         playing = false
         buffering = false
+        finished = false
         error = nil
         status = "Loading YouTube player…"
         webView?.reload()
+    }
+
+    /// Returns the player to its just-created state, for a screen that is switching
+    /// to a DIFFERENT video and rebuilding the embed (Haramayn Live switching
+    /// location, or retrying a stream). `reload()` cannot be used for that: it
+    /// reuses the existing web view, which is about to be replaced.
+    func reset() {
+        ready = false
+        playing = false
+        buffering = false
+        finished = false
+        error = nil
+        requiresDirectPlay = false
+        status = "Loading YouTube player…"
     }
 
     static func html(reference: YouTubeRef, start: Double, origin: String) -> String {

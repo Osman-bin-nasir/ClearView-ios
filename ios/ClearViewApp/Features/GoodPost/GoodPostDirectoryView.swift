@@ -65,6 +65,11 @@ final class DirectoryModel {
             // which is the one thing the "Saved copy" line exists to prevent.
             message = result.userMessage
         }
+        // The directory is a wall of avatars, and Android warms exactly this list when the
+        // screen shows it. Doing it here is also what puts the faces on the device before the
+        // network goes: the saved directory is drawn offline, and it should not be a list of
+        // blank circles when it is.
+        await RemoteImageCache.shared.prefetch(snapshot.allChannels.compactMap(\.iconUrl))
     }
 }
 

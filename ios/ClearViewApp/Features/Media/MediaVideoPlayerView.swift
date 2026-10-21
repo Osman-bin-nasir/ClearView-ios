@@ -6,7 +6,13 @@ struct MediaVideoPlayerView: View {
     let library: MediaLibrary
     @State private var player = YouTubePlayer()
     @State private var showSpeed = false
-    @State private var showPlaylists = false
+    /// The "Add to playlist" picker, opened from the ⋮ menu and the Playlist button.
+    @State private var showAddToPlaylist = false
+    /// "Reset Continue Watching" asks before it clears anything: this menu is one
+    /// careless tap away from the picture, and it throws away every resume position.
+    @State private var showResetContinue = false
+    /// What to say after a reset, in words — the row simply disappears otherwise.
+    @State private var message: String?
     @State private var limitation: String?
     @State private var downloads = AudioDownloads.shared
     @State private var audioPreparing = false
@@ -71,11 +77,22 @@ struct MediaVideoPlayerView: View {
             .navigationTitle(video.title).navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
-            .sheet(isPresented: $showPlaylists) { MediaPlaylistPicker(video: video, library: library) }
+            .sheet(isPresented: $showAddToPlaylist) { AddToPlaylistSheet(video: video, library: library) }
             .sheet(isPresented: $showAudioPlayer) { AudioPlayerView() }
             .alert("YouTube playback limitation", isPresented: Binding(get: { limitation != nil }, set: { if !$0 { limitation = nil } })) {
                 Button("OK", role: .cancel) { limitation = nil }
             } message: { Text(limitation ?? "") }
+            .alert("Reset Continue Watching?", isPresented: $showResetContinue) {
+                Button("Reset", role: .destructive) {
+                    message = MediaLibrary.resetContinueWatchingMessage(cleared: library.resetContinueWatching())
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears the resume position of every unfinished video, so Continue Watching starts over. Videos you finished keep their watched progress.")
+            }
+            .alert("Continue Watching", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                Button("OK", role: .cancel) { message = nil }
+            } message: { Text(message ?? "") }
             .onChange(of: player.position) { _, _ in saveProgress() }
             .onChange(of: player.playing) { _, playing in
                 if playing { hasPlayed = true }
@@ -87,16 +104,39 @@ struct MediaVideoPlayerView: View {
             .onDisappear { saveProgress(force: true); player.command("player.pauseVideo();") }
     }
 
+    /// The action row, and the ⋮ menu that carries what will not fit in it.
+    ///
+    /// The menu is Android's `VideoPlayerScreen` overflow: add to a playlist,
+    /// hide the video, mark it watched, and the row-wide Continue Watching reset,
+    /// which lives HERE rather than on the feed's own ⋮ because it is a decision
+    /// about what you were watching.
+    ///
+    /// It deliberately does NOT carry "Save video" or "Reload player", and that is
+    /// about what a player's ⋮ is FOR. Saving is a decision about the shelf, made
+    /// while looking at the shelf — the card's own ⋮ is where it belongs — and by the
+    /// time a video is open, saving it is not what a hand reaching for this menu wants.
+    /// Reload is a control over the embed, not over the video, and offering it here
+    /// invites the reader to press it instead of reporting the problem; when the embed
+    /// really has failed, the error card below carries its own Reload, next to the
+    /// reason it is offering one.
     private var actions: some View {
         HStack(alignment: .top, spacing: 0) {
             Menu {
-                Button(library.state.saved.contains { $0.id == video.id } ? "Remove from saved videos" : "Save video", systemImage: "bookmark") { library.toggleSave(video) }
+                Button("Add to playlist…", systemImage: "text.badge.plus") { showAddToPlaylist = true }
                 Button("Hide video", systemImage: "eye.slash") { library.hide(video) }
-                Button("Reload player", systemImage: "arrow.clockwise") { player.reload() }
+                // A live broadcast has no finite length to finish, so "watched"
+                // would have nothing to mean.
+                if video.live != true {
+                    Button("Mark as watched", systemImage: "checkmark.circle") {
+                        library.markWatched(video, duration: player.duration > 0 ? player.duration : Double(video.durationSeconds ?? 0))
+                    }
+                }
+                Divider()
+                Button("Reset Continue Watching", systemImage: "arrow.counterclockwise") { showResetContinue = true }
             } label: { actionLabel("More", symbol: "ellipsis", vertical: true) }.accessibilityIdentifier("media.player.more")
             ShareLink(item: video.url) { actionLabel("Share", symbol: "square.and.arrow.up") }.accessibilityIdentifier("media.player.share")
             Button { showSpeed.toggle() } label: { actionLabel("Speed", symbol: "speedometer") }.accessibilityIdentifier("media.player.speed")
-            Button { showPlaylists = true } label: { actionLabel("Playlist", symbol: "text.badge.plus") }.accessibilityLabel("Add to Playlist").accessibilityIdentifier("media.player.playlist")
+            Button { showAddToPlaylist = true } label: { actionLabel("Playlist", symbol: "text.badge.plus") }.accessibilityLabel("Add to Playlist").accessibilityIdentifier("media.player.playlist")
         }.buttonStyle(.plain)
     }
 
@@ -177,7 +217,8 @@ struct MediaVideoPlayerView: View {
 
         if let fileURL = downloads.fileURL(for: video.id) {
             controller.playLocal(videoId: video.id, title: video.title, channel: video.channel,
-                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: audioStart)
+                                 artworkURL: video.thumbnail, fileURL: fileURL, startAt: audioStart,
+                                 expectedDuration: knownDuration)
             showAudioPlayer = true
             return
         }
@@ -188,6 +229,7 @@ struct MediaVideoPlayerView: View {
             let extracted = try await YouTubeAudioExtractor().extractAudio(videoId: video.id)
             controller.playStream(videoId: video.id, title: video.title, channel: video.channel,
                                   artworkURL: video.thumbnail, streamURL: extracted.url, startAt: audioStart,
+                                  expectedDuration: knownDuration,
                                   resolver: { try await YouTubeAudioExtractor().extractAudio(videoId: video.id).url })
             showAudioPlayer = true
         } catch {
@@ -195,39 +237,63 @@ struct MediaVideoPlayerView: View {
         }
     }
 
+    /// The video's real length, as best the app knows it.
+    ///
+    /// The embed's own duration while it is playing, otherwise the duration the feed
+    /// resolved for the card. Handed to the audio player as the number to trust over
+    /// the stream's container — see `AudioPlaybackController.trustedDuration`.
+    private var knownDuration: Double {
+        if player.duration > 0 { return player.duration }
+        return Double(video.durationSeconds ?? 0)
+    }
+
     /// The Download Audio control, in whichever of its four states applies:
     /// not downloaded, resolving, downloading with progress, already saved.
+    ///
+    /// The saved state offers **Play offline** rather than reporting
+    /// "Downloaded": the reader who tapped Download asked to listen without a
+    /// network, and that is now one tap on this screen instead of a trip to the
+    /// Downloads list.
     @ViewBuilder
     private var downloadAudioButton: some View {
         let item = downloads.isDownloaded(video.id) ? downloads.item(for: video.id) : nil
         let update = downloads.progress[video.id]
         if let item {
-            HStack {
-                Label("Downloaded", systemImage: "checkmark.circle.fill")
-                    .font(.headline).foregroundStyle(Color.cvPrimary)
-                Spacer()
-                Button("Remove", role: .destructive) { downloads.remove(item) }.font(.subheadline.bold())
-            }
-            .padding(.vertical, 15).padding(.horizontal, 18)
-            .background(Color.cvSurfaceVariant, in: Capsule())
-            .accessibilityIdentifier("media.player.downloaded")
+            // Play only. Deleting a download is a decision about the library, not
+            // about this video, and the Downloads list already offers it on the
+            // row's own menu — a destructive button parked under the thumb that
+            // reaches for play is an accident waiting to happen.
+            Button { playOffline(item) } label: {
+                Label("Play offline", systemImage: "play.circle.fill")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 15)
+                    .background(Color.cvSurfaceVariant, in: Capsule())
+            }.buttonStyle(.plain).accessibilityIdentifier("media.player.playOffline")
         } else if let update {
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 if update.fraction < 0 {
                     ProgressView()
                 } else {
                     ProgressView(value: update.fraction)
                 }
                 HStack {
-                    Text(update.phase == .resolving ? "Finding the audio…" : update.phase == .processing ? "Preparing audio file…" : "Downloading…")
+                    Text(downloadLabel(update))
                         .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+                        .accessibilityIdentifier("media.player.downloading")
                     Spacer(minLength: 8)
                     Button("Cancel", role: .destructive) { downloads.cancel(video.id) }.font(.caption.bold())
+                }
+                // How much is left, and how long it will take. Android's own two
+                // lines, and the reason for them: a transfer with no estimate is
+                // indistinguishable from one that has stalled, and the size is what
+                // tells the reader whether the wait is worth starting.
+                let eta = AudioDownloadFormat.eta(seconds: update.etaSeconds)
+                if !eta.isEmpty {
+                    Text(eta).font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
+                        .accessibilityIdentifier("media.player.downloadEta")
                 }
             }
             .padding(14)
             .background(Color.cvSurfaceVariant, in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityIdentifier("media.player.downloading")
         } else {
             Button { downloads.download(video) } label: {
                 Label("Download Audio", systemImage: "arrow.down.to.line")
@@ -237,53 +303,47 @@ struct MediaVideoPlayerView: View {
         }
     }
 
+    /// The word for the transfer in progress, with the size when it is known: Android's
+    /// `Preparing… · ≈ 12.3 MB` / `Downloading 42% · ≈ 12.3 MB`.
+    private func downloadLabel(_ update: AudioDownloadProgress) -> String {
+        let size = update.totalBytes.flatMap { $0 > 0 ? " · ≈ \(AudioDownloadFormat.bytes($0))" : nil } ?? ""
+        switch update.phase {
+        case .resolving, .processing:
+            return "Preparing…\(size)"
+        case .downloading:
+            guard update.fraction >= 0 else { return "Downloading…\(size)" }
+            return "Downloading \(Int((min(1, max(0, update.fraction)) * 100).rounded()))%\(size)"
+        }
+    }
+
+    /// Plays the saved file, from the screen the reader downloaded it on.
+    ///
+    /// Same hand-off as Audio mode with one difference: there is nothing to
+    /// resolve and nothing that can expire, which is the point of the download.
+    /// The position is not carried over from the embedded player deliberately —
+    /// this button is for starting the downloaded track, and Audio mode is the
+    /// control for continuing where the video player is.
+    private func playOffline(_ item: AudioDownloadItem) {
+        guard let fileURL = downloads.fileURL(for: video.id) else {
+            // The manifest outlived its file: drop the row rather than offer a
+            // button that plays nothing.
+            downloads.remove(item)
+            return
+        }
+        saveProgress(force: true)
+        player.command("player.pauseVideo();")
+        AudioPlaybackController.shared.playLocal(
+            videoId: video.id, title: video.title, channel: video.channel,
+            artworkURL: video.thumbnail, fileURL: fileURL, expectedDuration: knownDuration
+        )
+        downloads.markPlayed(video.id)
+        showAudioPlayer = true
+    }
+
     static func time(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "00:00" }
         let total = Int(max(0, seconds))
         if total >= 3600 { return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) }
         return String(format: "%02d:%02d", total / 60, total % 60)
-    }
-}
-
-struct MediaPlaylistPicker: View {
-    let video: LibraryVideo
-    @Bindable var library: MediaLibrary
-    @State private var showCreate = false
-    @State private var name = ""
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Button("Create playlist", systemImage: "plus") { showCreate = true }
-                if library.state.playlists.isEmpty { Text("Create a playlist to keep your videos together.").foregroundStyle(Color.cvOnSurfaceVariant) }
-                ForEach(library.state.playlists) { playlist in
-                    Button {
-                        library.add(video, to: playlist.id)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Image(systemName: "play.rectangle.on.rectangle").foregroundStyle(Color.cvPrimary)
-                            VStack(alignment: .leading) { Text(playlist.name); Text("\(playlist.videos.count) videos").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant) }
-                            Spacer()
-                            if playlist.videos.contains(where: { $0.id == video.id }) { Image(systemName: "checkmark") }
-                        }
-                    }.buttonStyle(.plain)
-                }
-            }.navigationTitle("Add to Playlist").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-                .alert("New playlist", isPresented: $showCreate) {
-                    TextField("Playlist name", text: $name)
-                    Button("Create and add") {
-                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        let playlist = MediaPlaylist(name: trimmed)
-                        library.state.playlists.append(playlist)
-                        library.add(video, to: playlist.id)
-                        dismiss()
-                    }
-                    Button("Cancel", role: .cancel) {}
-                }
-        }.tint(.cvPrimary)
     }
 }

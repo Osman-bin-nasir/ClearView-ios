@@ -91,6 +91,63 @@ final class DiscoveryUITests: XCTestCase {
         capture("Add Media Channel", app: app)
     }
 
+    /// The ✕ on a channel avatar, end to end: it is there, one tap asks first, the tap
+    /// never doubles as "filter the feed", and Remove really removes.
+    ///
+    /// Worth a UI test rather than a unit test because the ✕ is an overlay ON the
+    /// avatar's own button, and the whole point of building it that way is hit testing:
+    /// a button nested in another button's label can fire both actions, which would
+    /// remove a channel because the avatar was tapped.
+    func testMediaChannelRemoveBadgeAsksBeforeRemoving() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--reset-preferences"]
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let channel: [String: Any] = ["id": "fixture-channel", "platform": "youtube", "handle": "fixture", "name": "UI test channel", "url": "https://www.youtube.com/@fixture", "sort": 0]
+        let video: [String: Any] = ["id": "fixture-video", "title": "Fixture video", "channel": "UI test channel", "channelID": "fixture-channel", "url": "https://www.youtube.com/watch?v=fixture-video", "isShort": false, "publishedAt": now, "durationSeconds": 120]
+        let state: [String: Any] = ["channels": [channel], "playlists": [], "recent": [], "saved": [], "feed": [video]]
+        app.launchEnvironment["CLEARVIEW_MEDIA_FIXTURE"] = String(decoding: try JSONSerialization.data(withJSONObject: state), as: UTF8.self)
+        app.launch()
+        app.tabBars.buttons["Media"].tap()
+        XCTAssertTrue(app.staticTexts["All Feed"].waitForExistence(timeout: 20))
+
+        let strip = app.scrollViews["media.channels.strip"]
+        let remove = app.buttons["media.channel.remove"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        // The first channel sits at the strip's right edge, so its ✕ starts half past the
+        // scroll view's bounds — and a tap out there lands outside the scroll view, on
+        // nothing. Scroll until the whole badge is inside the strip, which is also what a
+        // thumb does before tapping it.
+        for _ in 0..<4 where !strip.frame.contains(remove.frame) { strip.swipeLeft() }
+        XCTAssertTrue(strip.frame.contains(remove.frame))
+
+        remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let alert = app.alerts["Remove channel?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        // The bare ✕ must not remove anything on its own, and must not have selected the
+        // channel instead either: the feed is still on "All Feed" while the question is
+        // on screen.
+        XCTAssertTrue(app.staticTexts["All Feed"].exists)
+        capture("Media Channel Remove Prompt", app: app)
+        alert.buttons["Cancel"].tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["All Feed"].exists)
+
+        remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.alerts["Remove channel?"].waitForExistence(timeout: 10))
+        app.alerts.buttons["Remove"].tap()
+        waitUntilGone(remove)
+        XCTAssertEqual(app.buttons.matching(identifier: "media.channel.remove").count, 0)
+    }
+
+    /// XCUIElement has no "disappears" wait on the deployment target this suite builds
+    /// for, so poll: a removal is asynchronous (the strip re-renders from state).
+    private func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while element.exists && Date() < deadline {
+            usleep(200_000)
+        }
+    }
+
     private func capture(_ title: String, app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = title

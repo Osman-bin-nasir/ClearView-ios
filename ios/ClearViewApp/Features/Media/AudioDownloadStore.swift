@@ -71,6 +71,16 @@ struct AudioDownloadStore {
         root.appendingPathComponent("\(videoId).part")
     }
 
+    /// The scratch file a container remux writes into before it replaces the
+    /// fragmented original.
+    ///
+    /// Beside the audio and under a name no `fileName` ever uses, so a remux
+    /// that is interrupted leaves something the manifest cannot mistake for a
+    /// download — the same reason `partURL` is not the destination.
+    func remuxURL(videoId: String) -> URL {
+        root.appendingPathComponent("\(videoId).remux.m4a")
+    }
+
     /// The finished file for `item`, with the name its metadata recorded.
     func fileURL(for item: AudioDownloadItem) -> URL {
         root.appendingPathComponent(item.fileName)

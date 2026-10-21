@@ -51,15 +51,17 @@ struct CVAvatar: View {
     var size: CGFloat = 48
 
     var body: some View {
-        AsyncImage(url: url.flatMap(URL.init(string:))) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
+        // The disk cache, not `AsyncImage`: an avatar that has been seen once is on this
+        // device, so a channel list, a feed and the Media strip all draw their faces with no
+        // network at all — which is what makes the app usable on a plane rather than merely
+        // open. Initials are the placeholder, the same initials the avatar falls back to.
+        RemoteImage(url: url, placeholder: AnyView(
             ZStack {
                 Color.cvPrimaryContainer
                 Text(String(name.prefix(1)).uppercased())
                     .font(.system(size: size * 0.4, weight: .bold)).foregroundStyle(Color.cvPrimary)
             }
-        }
+        ))
         .frame(width: size, height: size).clipShape(Circle()).accessibilityHidden(true)
     }
 }

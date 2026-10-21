@@ -325,16 +325,35 @@ final class QuranTabUITests: XCTestCase {
         )
     }
 
-    func testReaderLanguageSearchFullScreenAndVerseActions() {
+    func testReaderLanguageSearchAndVerseActions() {
         let app = XCUIApplication()
         app.launchArguments = Self.cleanLaunch
         app.launch()
         XCTAssertTrue(openSurahAtTop("Al-Faatiha", in: app))
 
-        let language = app.buttons["reader.language"]
-        XCTAssertEqual(language.value as? String, "Arabic")
-        language.tap()
-        XCTAssertEqual(language.value as? String, "English")
+        // The two reading modes are two buttons now (Android's `QuranSegment`),
+        // not one that toggles, so the state is asserted on the pair.
+        let arabic = app.buttons["reader.mode.arabic"]
+        let english = app.buttons["reader.mode.english"]
+        XCTAssertTrue(arabic.waitForExistence(timeout: 5), "the reader must offer the two reading modes")
+        XCTAssertTrue(english.exists, "both modes must be reachable, not one that toggles")
+        XCTAssertEqual(arabic.value as? String, "Selected")
+        XCTAssertEqual(english.value as? String, "Not selected")
+        english.tap()
+        XCTAssertEqual(english.value as? String, "Selected")
+        XCTAssertEqual(arabic.value as? String, "Not selected")
+        arabic.tap()
+        XCTAssertEqual(arabic.value as? String, "Selected")
+
+        // The identity block the top bar can fold away (§2). Its meta line is the
+        // assertion because it is what the reader looks at: the surah's number and
+        // how many ayahs it holds.
+        let meta = app.staticTexts["Surah 1 · 7 ayahs"]
+        XCTAssertTrue(meta.waitForExistence(timeout: 5), "a surah opens with its details showing")
+        app.buttons["reader.headerToggle"].tap()
+        XCTAssertFalse(meta.exists, "folding must take the details off the page")
+        app.buttons["reader.headerToggle"].tap()
+        XCTAssertTrue(meta.waitForExistence(timeout: 5), "unfolding must bring them back")
 
         app.staticTexts["1:1"].tap()
         XCTAssertTrue(app.buttons["reader.copy.1:1"].waitForExistence(timeout: 5))
@@ -343,12 +362,6 @@ final class QuranTabUITests: XCTestCase {
         app.buttons["reader.listen.1:1"].tap()
         XCTAssertTrue(app.buttons["Stop recitation"].waitForExistence(timeout: 5))
         app.buttons["Stop recitation"].tap()
-
-        app.buttons["reader.fullScreen"].tap()
-        XCTAssertFalse(app.navigationBars["Al-Faatiha"].exists)
-        XCTAssertFalse(app.tabBars.firstMatch.exists)
-        app.buttons["reader.fullScreen"].tap()
-        XCTAssertTrue(app.navigationBars["Al-Faatiha"].waitForExistence(timeout: 5))
 
         app.buttons["reader.search"].tap()
         let search = app.textFields["reader.search.field"]
@@ -365,11 +378,15 @@ final class QuranTabUITests: XCTestCase {
         app.launchArguments = Self.cleanLaunch
         app.launch()
         XCTAssertTrue(openSurahAtTop("Al-Baqara", in: app))
-        app.buttons["reader.autoScroll"].tap()
         for speed in ["Slow", "Medium", "Fast"] {
-            let button = app.buttons["reader.speed.\(speed)"]
-            XCTAssertTrue(button.exists)
-            button.tap()
+            // The paces live in a menu now (Android's `DropdownMenu`), so the icon
+            // opens the list and the choice is what closes it — nothing stays on
+            // screen between the choosing and the reading.
+            app.buttons["reader.autoScroll"].tap()
+            let option = app.buttons["reader.speed.\(speed)"]
+            XCTAssertTrue(option.waitForExistence(timeout: 5), "the speed menu must list \(speed)")
+            option.tap()
+            XCTAssertFalse(option.waitForExistence(timeout: 2), "choosing a pace must close the menu")
             let autoScroll = app.buttons["reader.autoScroll"]
             expectation(for: NSPredicate(format: "value == %@", "\(speed), scrolling"), evaluatedWith: autoScroll)
             waitForExpectations(timeout: 5)
@@ -378,6 +395,20 @@ final class QuranTabUITests: XCTestCase {
             expectation(for: NSPredicate(format: "value == 'Paused'"), evaluatedWith: autoScroll)
             waitForExpectations(timeout: 5)
         }
+
+        // Off is one of the rows in that same list rather than a separate switch,
+        // so it has to stop a page that is already moving.
+        app.buttons["reader.autoScroll"].tap()
+        app.buttons["reader.speed.Medium"].tap()
+        let autoScroll = app.buttons["reader.autoScroll"]
+        expectation(for: NSPredicate(format: "value == 'Medium, scrolling'"), evaluatedWith: autoScroll)
+        waitForExpectations(timeout: 5)
+        app.buttons["reader.autoScroll"].tap()
+        let off = app.buttons["reader.speed.Off"]
+        XCTAssertTrue(off.waitForExistence(timeout: 5), "the speed menu must offer Off")
+        off.tap()
+        expectation(for: NSPredicate(format: "value == 'Paused'"), evaluatedWith: autoScroll)
+        waitForExpectations(timeout: 5)
     }
 
     // MARK: - Helpers

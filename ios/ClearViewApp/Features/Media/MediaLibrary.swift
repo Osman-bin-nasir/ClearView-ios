@@ -108,7 +108,25 @@ struct MediaLibraryState: Codable {
     var feed: [LibraryVideo] = []
     var hiddenVideoIDs: [String]?
     var hiddenChannelIDs: [String]?
+    /// Channels whose notifications are silenced, by channel id.
+    ///
+    /// Separate from `hiddenChannelIDs` on purpose: a muted channel still refreshes
+    /// and still appears in the feed, and only its notifications are off — so the two
+    /// states must be able to hold at once, which one list could not express.
+    /// Optional like the two above, so a library written before muting existed still
+    /// decodes instead of resetting the whole tab.
+    var mutedChannelIDs: [String]?
     var watchProgress: [String: MediaWatchProgress]?
+
+    /// YouTube playlists imported by URL, and their fetched videos.
+    ///
+    /// Optional, like the three above: the synthesized decoder does not fall back
+    /// to a property's default value for a key that is missing, so a non-optional
+    /// field added here would fail to decode every library written before it —
+    /// and the initialiser's `try?` would answer by silently resetting the whole
+    /// tab to empty.
+    var importedPlaylists: [ImportedPlaylist]?
+    var importedPlaylistVideos: [String: [LibraryVideo]]?
 }
 
 @MainActor
@@ -131,15 +149,46 @@ final class MediaLibrary {
         self.defaults = defaults
         if let restored = defaults.data(forKey: "media.library.v1").flatMap({ try? JSONDecoder().decode(MediaLibraryState.self, from: $0) }) {
             state = restored
+            // The default channel is restored to an install that never had it — ONCE.
+            //
+            // Seeding used to happen on the first run only, which left every device whose library
+            // was written before the default existed with an empty tab and no way to get the
+            // default back. Two things have to stay true at the same time, and the flag is what
+            // keeps them apart: the tab opens with Safina Society on it, and a reader who has
+            // emptied their list never has it filled in behind them.
+            //
+            // The flag is set whether or not anything is seeded, because "the list is empty" is
+            // not a durable answer on its own: this initialiser runs every time SwiftUI builds the
+            // view struct, so a rule that seeds whenever the list is empty re-adds the channel
+            // after the reader removes it — which is exactly what a UI test caught.
+            if !defaults.bool(forKey: Self.defaultChannelSeededKey) {
+                defaults.set(true, forKey: Self.defaultChannelSeededKey)
+                if state.channels.isEmpty, !defaults.bool(forKey: Self.defaultChannelRemovedKey) {
+                    state.channels = [Self.defaultChannel]
+                    persist()
+                }
+            }
         } else {
             state = MediaLibraryState()
-            state.channels = [DirectoryChannel(id: "UC2cX3SmsdWsrRS8t_5zvzEw", platform: "youtube", handle: "SafinaSociety",
-                name: "Safina Society", iconUrl: nil, url: "https://www.youtube.com/channel/UC2cX3SmsdWsrRS8t_5zvzEw",
-                categoryId: nil, subcategoryId: nil, sort: 0)]
+            state.channels = [Self.defaultChannel]
+            defaults.set(true, forKey: Self.defaultChannelSeededKey)
             persist()
         }
         repairCachedChannelIDs()
     }
+
+    /// The channel a Media tab opens with, so it is never empty on a first run.
+    static let defaultChannel = DirectoryChannel(id: "UC2cX3SmsdWsrRS8t_5zvzEw", platform: "youtube", handle: "SafinaSociety",
+        name: "Safina Society", iconUrl: nil, url: "https://www.youtube.com/channel/UC2cX3SmsdWsrRS8t_5zvzEw",
+        categoryId: nil, subcategoryId: nil, sort: 0)
+
+    /// Set when the reader removes that channel themselves, which is the one case where an empty
+    /// list is a decision rather than a gap.
+    private static let defaultChannelRemovedKey = "media.defaultChannel.removed"
+
+    /// Records that the default channel has been considered once, so the decision above is made a
+    /// single time per install rather than on every view rebuild.
+    private static let defaultChannelSeededKey = "media.defaultChannel.seeded"
 
     private func repairCachedChannelIDs() {
         let channels = state.channels
@@ -187,6 +236,37 @@ final class MediaLibrary {
         if hidden.contains(channel.id) { hidden.removeAll { $0 == channel.id } }
         else { hidden.append(channel.id) }
         state.hiddenChannelIDs = hidden
+        persist()
+    }
+
+    /// Hides one channel from the All Feed by its id — the video card's own
+    /// "Hide channel" (Android's `libraryStore.hideChannel(video.channelId)`).
+    ///
+    /// A plain hide rather than a toggle: the card's menu says "Hide channel", and a
+    /// second tap on a menu that has already disappeared could only ever unhide
+    /// something the reader can no longer see. Idempotent, so hiding twice is not a
+    /// way to accidentally unhide.
+    func hideChannel(_ channelID: String) {
+        guard !channelID.isEmpty else { return }
+        var hidden = state.hiddenChannelIDs ?? []
+        guard !hidden.contains(channelID) else { return }
+        hidden.append(channelID)
+        state.hiddenChannelIDs = hidden
+        persist()
+    }
+
+    /// Whether one channel's notifications are silenced.
+    func isChannelMuted(_ channelID: String) -> Bool {
+        (state.mutedChannelIDs ?? []).contains(channelID)
+    }
+
+    /// Silences or un-silences ONE channel's notifications, independent of every
+    /// other channel and of the platform. Android's `onToggleNotifications`.
+    func toggleChannelNotifications(_ channel: DirectoryChannel) {
+        var muted = state.mutedChannelIDs ?? []
+        if muted.contains(channel.id) { muted.removeAll { $0 == channel.id } }
+        else { muted.append(channel.id) }
+        state.mutedChannelIDs = muted
         persist()
     }
 
@@ -376,6 +456,11 @@ final class MediaLibrary {
         if let existing = state.channels.first(where: { $0.id == channel.id || MediaChannelIdentity.sameProfile($0, channel) }) {
             state.channels.removeAll { $0.id == existing.id }
             state.hiddenChannelIDs?.removeAll { $0 == existing.id }
+            // Removing the DEFAULT channel is remembered, so the next launch does not put it back:
+            // the seeding above exists for an install that never had it, not to overrule a reader.
+            if existing.id == Self.defaultChannel.id {
+                defaults.set(true, forKey: Self.defaultChannelRemovedKey)
+            }
         }
         else { state.channels.append(channel) }
         persist()
@@ -420,6 +505,136 @@ final class MediaLibrary {
         if state.watchProgress == nil { state.watchProgress = [:] }
         state.watchProgress?[video.id] = MediaWatchProgress(position: min(position, duration), duration: duration, updatedAt: Date(), dismissedFromContinue: false)
         persist()
+    }
+
+    /// Records the video as finished, so it leaves Continue Watching for good and
+    /// carries its Watched badge.
+    ///
+    /// Written as a full-length position rather than a separate flag, because that
+    /// is the one piece of state the row, the badge and the resume rule all read —
+    /// a second "watched" flag would be a second thing to keep in agreement.
+    func markWatched(_ video: LibraryVideo, duration: Double) {
+        guard video.live != true, duration.isFinite, duration > 0 else { return }
+        recordProgress(video, position: duration, duration: duration)
+    }
+
+    /// Empties Continue Watching and reports how many resume positions went.
+    ///
+    /// Android's `clearContinueWatching`: the resume positions of *unfinished* videos
+    /// are cleared, and so are the "removed from this row" markers, which are dead
+    /// state once the item they hid is gone. A FINISHED video keeps its progress
+    /// deliberately — that is the Watched badge and the full bar on its own card,
+    /// which is not what the reader asked to touch.
+    ///
+    /// The count is returned so the caller can say what happened rather than
+    /// leaving the reader to guess whether the tap did anything.
+    @discardableResult
+    func resetContinueWatching() -> Int {
+        guard let progress = state.watchProgress else { return 0 }
+        let cleared = progress.values.filter { $0.fraction < FeedFilters.watchedFractionThreshold }.count
+        state.watchProgress = progress.filter {
+            $0.value.fraction >= FeedFilters.watchedFractionThreshold && $0.value.dismissedFromContinue != true
+        }
+        persist()
+        return cleared
+    }
+
+    /// What to say after emptying Continue Watching, given how many resume
+    /// positions went.
+    ///
+    /// Android's `continueWatchingResetMessage`, word for word. The row simply
+    /// disappears, so without a sentence the tap reads as ambiguous — and "already
+    /// empty" is worth saying rather than leaving the reader to wonder whether it
+    /// worked at all.
+    /// `nonisolated` because it is pure text: nothing about the sentence depends
+    /// on the library, and a caller with only a count (a test, a notification)
+    /// should not have to reach the main actor for it.
+    nonisolated static func resetContinueWatchingMessage(cleared: Int) -> String {
+        switch cleared {
+        case ..<1: return "Continue Watching was already empty"
+        case 1: return "Cleared 1 resume position"
+        default: return "Cleared \(cleared) resume positions"
+        }
+    }
+
+    /// Takes one video out of Continue Watching without touching its progress.
+    /// The card's own menu, where "not this one" is a different intent from the
+    /// row-wide reset.
+    func dismissFromContinue(_ video: LibraryVideo) {
+        guard var progress = state.watchProgress?[video.id] else { return }
+        progress.dismissedFromContinue = true
+        state.watchProgress?[video.id] = progress
+        persist()
+    }
+
+    // MARK: - Imported YouTube playlists
+
+    var importedPlaylists: [ImportedPlaylist] { state.importedPlaylists ?? [] }
+
+    /// The videos last fetched for an imported playlist, if any.
+    func cachedPlaylistVideos(_ playlistId: String) -> [LibraryVideo] {
+        state.importedPlaylistVideos?[playlistId] ?? []
+    }
+
+    /// Writes one imported playlist's videos into the cache.
+    ///
+    /// The dictionary is created before the subscript write, and that line is the
+    /// whole of the "imported playlist shows 0 videos" bug: `dict?[key] = value` on a
+    /// **nil** dictionary is a silent no-op in Swift — the optional chain short-
+    /// circuits and the setter is never called — so the fetched videos were handed to
+    /// nothing. The card counted an empty cache, and every open re-fetched the playlist
+    /// from YouTube, because "nothing is cached" is exactly what a no-op leaves behind.
+    func storeImportedPlaylistVideos(_ playlistId: String, videos: [LibraryVideo]) {
+        if state.importedPlaylistVideos == nil { state.importedPlaylistVideos = [:] }
+        state.importedPlaylistVideos?[playlistId] = videos
+        persist()
+    }
+
+    /// Imports a YouTube playlist by URL (or bare id) and caches its videos.
+    ///
+    /// Imports are keyed by playlist id, so re-importing the same link refreshes
+    /// the entry in place instead of adding a second copy of it.
+    @discardableResult
+    func importPlaylist(input: String) async throws -> ImportedPlaylist {
+        let imported = try await YouTubePlaylistImporter.fetch(input: input)
+        let record = ImportedPlaylist(
+            playlistId: imported.playlistId,
+            title: imported.title,
+            sourceRef: input.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        var list = state.importedPlaylists ?? []
+        if let index = list.firstIndex(where: { $0.playlistId == record.playlistId }) { list[index] = record }
+        else { list.append(record) }
+        state.importedPlaylists = list
+        storeImportedPlaylistVideos(record.playlistId, videos: imported.videos)
+        return record
+    }
+
+    func removeImportedPlaylist(_ playlistId: String) {
+        state.importedPlaylists = (state.importedPlaylists ?? []).filter { $0.playlistId != playlistId }
+        state.importedPlaylistVideos?.removeValue(forKey: playlistId)
+        persist()
+    }
+
+    /// The playlist's videos, refetched from YouTube when nothing is cached.
+    ///
+    /// Only the *initial* page of a playlist is read, so a playlist longer than
+    /// the ~100 entries YouTube embeds shows its first hundred — said plainly here
+    /// rather than silently truncating, since the alternative (walking YouTube's
+    /// `youtubei/v1/browse` continuations) needs an API key and a request shape
+    /// that changes without notice.
+    func loadImportedPlaylist(_ playlist: ImportedPlaylist) async throws -> [LibraryVideo] {
+        if let cached = state.importedPlaylistVideos?[playlist.playlistId], !cached.isEmpty { return cached }
+        let reference = playlist.sourceRef.isEmpty ? playlist.playlistId : playlist.sourceRef
+        let refreshed = try await YouTubePlaylistImporter.fetch(input: reference)
+        storeImportedPlaylistVideos(playlist.playlistId, videos: refreshed.videos)
+        var list = state.importedPlaylists ?? []
+        if let index = list.firstIndex(where: { $0.playlistId == playlist.playlistId }) {
+            list[index].title = refreshed.title
+            state.importedPlaylists = list
+        }
+        persist()
+        return refreshed.videos
     }
 
     func add(_ video: LibraryVideo, to playlistID: String) {

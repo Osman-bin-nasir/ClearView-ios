@@ -2,6 +2,50 @@ import Foundation
 import AVFoundation
 import Observation
 
+/// How the download UI words a size and an estimated time remaining.
+///
+/// A direct port of Android's `Formatters.kt` (`formatBytes` / `formatEtaRemaining`),
+/// wording included, because these two apps describe the same download and a reader
+/// moving between them should not find one saying "286.7 MB" and the other "287 MB".
+/// Pure and static so both the strings are unit-testable without a download.
+enum AudioDownloadFormat {
+
+    /// `500 B`, `14 KB`, `286.7 MB`, `1.5 GB` — one decimal, with a trailing `.0`
+    /// stripped so an exact value reads cleanly.
+    static func bytes(_ value: Int64) -> String {
+        let bytes = max(0, value)
+        let units: [(threshold: Int64, divisor: Double, suffix: String)] = [
+            (1 << 30, Double(1 << 30), "GB"),
+            (1 << 20, Double(1 << 20), "MB"),
+            (1 << 10, Double(1 << 10), "KB"),
+        ]
+        for unit in units where bytes >= unit.threshold {
+            return compact(Double(bytes) / unit.divisor) + " " + unit.suffix
+        }
+        return "\(bytes) B"
+    }
+
+    /// `~2m 30s left` for an estimate in seconds, or "" while the estimate would be
+    /// noise — too early to measure, or so close to done that `~0s left` is worse
+    /// than saying nothing. Nil (no estimate yet) and the sub-2-second case are the
+    /// same answer.
+    static func eta(seconds: Int64?) -> String {
+        guard let seconds, seconds >= 2 else { return "" }
+        let value = max(0, seconds)
+        switch value {
+        case ..<60: return "~\(value)s left"
+        case ..<3600: return "~\(value / 60)m \(value % 60)s left"
+        default: return "~\(value / 3600)h \((value % 3600) / 60)m left"
+        }
+    }
+
+    /// One decimal, `.0` dropped.
+    private static func compact(_ value: Double) -> String {
+        let text = String(format: "%.1f", value)
+        return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+    }
+}
+
 /// Live progress for one in-flight download.
 struct AudioDownloadProgress: Equatable {
     enum Phase: Equatable {
@@ -326,6 +370,67 @@ private final class ProgressReporter {
     }
 }
 
+/// Rewrites a downloaded container into one AVFoundation measures correctly.
+///
+/// YouTube serves audio as a *fragmented* MP4 — `ftyp`, then `moov` with `mvex`,
+/// then a `sidx` and a `moof`/`mdat` pair per fragment. AVFoundation measures
+/// that container as TWICE its real length, while the file's own `mvhd` and
+/// `mdhd` disagree with it. Measured on a real 11:55 download (`k9VvSaQC53Y`,
+/// 11 574 698 bytes): both boxes declared `duration = 31 537 152` at timescale
+/// 44 100, i.e. 715.128 s, and `AVURLAsset.duration` and
+/// `AVPlayerItem.duration` both answered **1430.208 s**.
+///
+/// That is the whole of the "23 minute download" bug: the bytes were right and
+/// the app played 11:55 of talk followed by 11:55 of silence, because the player
+/// believed there was more media to come. Nothing about the transfer was wrong;
+/// only the measuring of the result was.
+///
+/// The cure is a **passthrough remux** — no re-encode, no quality lost. The same
+/// file exported with `AVAssetExportPresetPassthrough` became a plain `m4af`
+/// that AVFoundation measured as 715.080 s, with the identical 30 798 packets and
+/// 11 442 399 audio bytes.
+protocol AudioContainerNormalizing: Sendable {
+    /// True when this file's container measures wrongly and has to be rewritten
+    /// before it is published.
+    func needsNormalizing(_ url: URL) -> Bool
+
+    /// Rewrites `url` into `output`, losslessly. Throws when the rewrite fails.
+    func normalize(_ url: URL, to output: URL) async throws
+}
+
+/// What this app ships: sniff for a fragmented MP4, remux it.
+struct FragmentedAudioRemuxer: AudioContainerNormalizing {
+
+    /// How much of the file to search for the `moof` marker.
+    ///
+    /// A fragmented file has its first `moof` immediately after the `moov` —
+    /// 1 619 bytes into the file measured above — so the head of the file holds
+    /// the answer. A progressive file (a plain feed download, a social post's
+    /// audio) is `moov`/`mdat` and has none. This is a marker search, not a box
+    /// parser: a false positive costs one harmless remux, while a parser here
+    /// would be a second implementation of MP4 to keep correct.
+    static let sniffBytes = 1024 * 1024
+
+    /// True when the file looks like a fragmented MP4.
+    static func isFragmented(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: sniffBytes), !head.isEmpty else { return false }
+        return head.range(of: Data("moof".utf8)) != nil
+    }
+
+    func needsNormalizing(_ url: URL) -> Bool { Self.isFragmented(url) }
+
+    func normalize(_ url: URL, to output: URL) async throws {
+        try? FileManager.default.removeItem(at: output)
+        let asset = AVURLAsset(url: url)
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            throw AudioDownloadError.invalidResponse
+        }
+        try await export.export(to: output, as: .m4a)
+    }
+}
+
 /// The app's offline audio: the downloads manifest, in-flight transfers, and the
 /// operations the Downloads screen and the player call.
 ///
@@ -353,16 +458,19 @@ final class AudioDownloads {
     @ObservationIgnored let store: AudioDownloadStore
     @ObservationIgnored private let extractor: AudioStreamExtracting
     @ObservationIgnored private let downloader: AudioFileDownloader
+    @ObservationIgnored private let normalizer: AudioContainerNormalizing
     @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
 
     init(
         store: AudioDownloadStore = AudioDownloadStore(),
         extractor: AudioStreamExtracting = YouTubeAudioExtractor(),
-        downloader: AudioFileDownloader = AudioFileDownloader()
+        downloader: AudioFileDownloader = AudioFileDownloader(),
+        normalizer: AudioContainerNormalizing = FragmentedAudioRemuxer()
     ) {
         self.store = store
         self.extractor = extractor
         self.downloader = downloader
+        self.normalizer = normalizer
         try? store.ensureDirectory()
         items = store.load().filter { FileManager.default.fileExists(atPath: store.fileURL(for: $0).path) }
             .sorted { $0.downloadedAt > $1.downloadedAt }
@@ -447,7 +555,11 @@ final class AudioDownloads {
                     try Task.checkCancellation()
                     try? FileManager.default.removeItem(at: destination)
                     try FileManager.default.moveItem(at: temporary, to: destination)
-                    size = (try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber)?.int64Value ?? 0
+                    size = Self.fileSize(destination)
+                    guard size > 0 else { throw AudioDownloadError.empty }
+                } else if self.normalizer.needsNormalizing(destination) {
+                    destination = await self.remux(destination, videoId: videoId)
+                    size = Self.fileSize(destination)
                     guard size > 0 else { throw AudioDownloadError.empty }
                 }
                 let asset = AVURLAsset(url: destination)
@@ -455,8 +567,13 @@ final class AudioDownloads {
                     try? FileManager.default.removeItem(at: destination)
                     throw AudioExtractionError.noAudioStream
                 }
+                // The published file's own length, not the feed's — the RSS feed
+                // carries no duration at all, and "unknown" is what let a
+                // doubled one go unnoticed.
+                let duration = (try? await asset.load(.duration).seconds) ?? 0
                 try Task.checkCancellation()
-                self.finish(video: video, extracted: extracted, destination: destination, size: size, source: source)
+                self.finish(video: video, extracted: extracted, destination: destination, size: size,
+                            duration: duration, source: source)
             } catch is CancellationError {
                 // Cancelling is an outcome the reader asked for, not an error.
                 MediaLog.downloads.info("download \(videoId, privacy: .public): cancelled")
@@ -467,11 +584,51 @@ final class AudioDownloads {
         }
     }
 
+    /// Replaces a fragmented, wrongly-measured file with a remuxed one.
+    ///
+    /// The published name never changes: the remux is written beside the
+    /// original, and the swap is a rename within the same directory, so a
+    /// reader who removes a download mid-remux cannot leave two files claiming
+    /// to be the same track.
+    ///
+    /// A failure here is not fatal on purpose. A fragmented file still plays,
+    /// it merely plays silence after its real end, and the reader is better off
+    /// with that than with no download at all — so the original is kept and the
+    /// reason is logged.
+    private func remux(_ raw: URL, videoId: String) async -> URL {
+        progress[videoId] = AudioDownloadProgress(phase: .processing)
+        let remuxed = store.remuxURL(videoId: videoId)
+        do {
+            try await normalizer.normalize(raw, to: remuxed)
+            guard Self.fileSize(remuxed) > 0 else { throw AudioDownloadError.empty }
+            try? FileManager.default.removeItem(at: raw)
+            do {
+                try FileManager.default.moveItem(at: remuxed, to: raw)
+            } catch {
+                // The original is gone but the remuxed file is intact: publish
+                // that rather than nothing.
+                MediaLog.downloads.notice("download \(videoId, privacy: .public): remux kept under its temporary name — \(error.localizedDescription, privacy: .public)")
+                return remuxed
+            }
+            MediaLog.downloads.notice("download \(videoId, privacy: .public): remuxed a fragmented container, which AVFoundation measures at twice its real length")
+            return raw
+        } catch {
+            try? FileManager.default.removeItem(at: remuxed)
+            MediaLog.downloads.error("download \(videoId, privacy: .public): remux failed, publishing the original container — \(error.localizedDescription, privacy: .public)")
+            return raw
+        }
+    }
+
+    private static func fileSize(_ url: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
     private func finish(
         video: LibraryVideo,
         extracted: ExtractedAudio,
         destination: URL,
         size: Int64,
+        duration: Double,
         source: String
     ) {
         let item = AudioDownloadItem(
@@ -487,7 +644,7 @@ final class AudioDownloads {
             // iOS has no local thumbnail cache keyed by file name, so this holds
             // the source's image URL, which the downloads list loads directly.
             thumbnailPath: video.thumbnail ?? "",
-            durationSeconds: video.durationSeconds ?? 0,
+            durationSeconds: duration > 0 ? Int64(duration.rounded()) : (video.durationSeconds ?? 0),
             channelId: video.channelID ?? ""
         )
         items.removeAll { $0.videoId == item.videoId }

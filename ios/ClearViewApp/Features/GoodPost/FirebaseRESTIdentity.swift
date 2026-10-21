@@ -50,11 +50,32 @@ actor FirebaseRESTIdentity: GoodPostIdentity {
         return token
     }
 
+    /// An ID token for the creator account these credentials belong to, or nil.
+    ///
+    /// `signUp` decides which way round the two Firebase calls go; it does **not** decide whether an
+    /// account exists, because only Firebase knows that. Creating an account that is already there is
+    /// refused with `EMAIL_EXISTS`, and the useful answer to that is to sign the same credentials in —
+    /// so a returning creator and a new one can share one Continue button, which is what makes the
+    /// screen one form rather than asking somebody to know which kind of account they have.
     func creatorToken(email: String, password: String, signUp: Bool) async -> String? {
         guard available else { return nil }
-        let endpoint = signUp ? "accounts:signUp" : "accounts:signInWithPassword"
-        let response = await request(host: "identitytoolkit.googleapis.com", path: "v1/\(endpoint)",
-            body: ["email": email, "password": password, "returnSecureToken": true])
+        let body: [String: Any] = ["email": email, "password": password, "returnSecureToken": true]
+        let host = "identitytoolkit.googleapis.com"
+
+        if signUp {
+            if let created = await request(host: host, path: "v1/accounts:signUp", body: body),
+               let token = created["idToken"] as? String {
+                return token
+            }
+            // Either the address is taken or the sign-up was refused for a reason a sign-in will
+            // report the same way. One attempt, so the caller gets one answer either way.
+        }
+
+        let response = await request(
+            host: host,
+            path: "v1/accounts:signInWithPassword",
+            body: body
+        )
         return response?["idToken"] as? String
     }
 

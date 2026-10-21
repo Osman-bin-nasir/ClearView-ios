@@ -22,4 +22,8 @@ enum MediaLog {
     static let downloads = Logger(subsystem: subsystem, category: "downloads")
     /// Instagram / X / YouTube feed refresh.
     static let feeds = Logger(subsystem: subsystem, category: "feeds")
+    /// Haramayn Live: resolving Makkah / Madinah's current broadcast.
+    static let live = Logger(subsystem: subsystem, category: "live")
+    /// Video byte caches: storing Good Post clips on the device so a second play is free.
+    static let video = Logger(subsystem: subsystem, category: "video")
 }

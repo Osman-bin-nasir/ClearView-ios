@@ -63,11 +63,9 @@ struct DownloadsSection: View {
             HStack(spacing: 12) {
                 Button { play(item) } label: {
                     ZStack {
-                        AsyncImage(url: item.thumbnailPath.isEmpty ? nil : URL(string: item.thumbnailPath)) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
+                        RemoteImage(url: item.thumbnailPath.isEmpty ? nil : item.thumbnailPath, placeholder: AnyView(
                             ZStack { Color.cvSurfaceContainerHigh; Image(systemName: "headphones").foregroundStyle(Color.cvOnSurfaceVariant) }
-                        }
+                        ))
                         .frame(width: 64, height: 48).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
                         Image(systemName: "play.circle.fill").font(.system(size: 22)).foregroundStyle(.white)
                     }

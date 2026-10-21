@@ -139,14 +139,11 @@ struct GoodPostAdCarousel: View {
         GeometryReader { geometry in
             ZStack {
                 adColor(ad.backgroundColor, fallback: .cvSurfaceContainer)
-                if ad.isImage, let source = ad.imageUrl, let url = URL(string: source) {
-                    AsyncImage(url: url) { image in
-                        image.resizable().aspectRatio(contentMode: ad.imageFit == "contain" ? .fit : .fill)
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .clipped()
-                    } placeholder: {
-                        Image(systemName: "photo").foregroundStyle(Color.cvOnSurfaceVariant)
-                    }
+                if ad.isImage, let source = ad.imageUrl {
+                    RemoteImage(url: source, contentMode: ad.imageFit == "contain" ? .fit : .fill,
+                                placeholder: AnyView(Image(systemName: "photo").foregroundStyle(Color.cvOnSurfaceVariant)))
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
                 } else {
                     Text(ad.displayText).font(.title3.bold()).multilineTextAlignment(.center)
                         .foregroundStyle(adColor(ad.textColor, fallback: .primary)).padding(24)

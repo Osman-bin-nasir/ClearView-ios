@@ -11,10 +11,26 @@ final class NotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        await Self.refreshSavedContent()
+        return [.banner, .list, .sound]
+    }
+
+    /// A notification is the moment the app is told that something changed, so it is the moment to
+    /// bring the saved tab up to date: this is the client half of Android's update pass, run on the
+    /// news rather than on a fifteen-minute timer.
+    ///
+    /// It reads, it does not display — the notification itself is already built by the time this
+    /// runs — and a failure is deliberately silent: the next open fetches the same thing anyway,
+    /// and a refresh nobody asked for must not be able to produce an error nobody can dismiss.
+    nonisolated static func refreshSavedContent() async {
+        await GoodPostRepository().refreshSavedContent()
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        // Tapped (or dismissed): the reader is on the way into the app, and the tab is about to be
+        // opened. Whether the notification was a Todo or a channel update is not this decision's
+        // business — the pass is idempotent and bounded.
+        await Self.refreshSavedContent()
         guard response.actionIdentifier == "clearview.todo.complete",
               let identifier = response.notification.request.content.userInfo["todoID"] as? String,
               let day = response.notification.request.content.userInfo["epochDay"] as? NSNumber else { return }

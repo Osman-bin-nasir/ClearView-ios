@@ -121,11 +121,11 @@ struct QuranLibraryView: View {
                                             // scripture in the system font, so a verse
                                             // looks different here than in the reader
                                             // it opens.
-                                            Text(verse.arabicText)
-                                                .font(QuranTypography.font(
-                                                    baseSize: QuranTypography.listBaseSize,
-                                                    scale: model.arabicTextScale
-                                                ))
+                                            QuranTypography.arabic(
+                                                verse.arabicText,
+                                                baseSize: QuranTypography.listBaseSize,
+                                                scale: model.arabicTextScale
+                                            )
                                                 .lineSpacing(QuranTypography.lineSpacing(
                                                     baseSize: QuranTypography.listBaseSize,
                                                     scale: model.arabicTextScale

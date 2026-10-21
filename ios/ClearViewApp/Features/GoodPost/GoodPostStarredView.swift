@@ -168,13 +168,9 @@ private struct StarredRow: View {
 
             Spacer(minLength: 0)
 
-            if let media, let raw = media.url, let url = URL(string: raw) {
+            if let media, let raw = media.url {
                 ZStack {
-                    AsyncImage(url: url) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.cvSurfaceContainer
-                    }
+                    RemoteImage(url: raw, placeholder: AnyView(Color.cvSurfaceContainer))
                     if media.isVideo {
                         Image(systemName: "play.fill")
                             .font(.system(size: 10)).foregroundStyle(.white)

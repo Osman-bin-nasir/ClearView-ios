@@ -156,7 +156,7 @@ import SharedKotlin
             Text("Nothing saved yet")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.cvOnSurface)
-            Text("Tap the bookmark on any ayah to save it, or the star in a surah's toolbar to save the whole surah.")
+            Text("Tap the bookmark on any ayah to save it, or the star beside a surah's name in the reader to save the whole surah.")
                 .font(.footnote)
                 .foregroundStyle(Color.cvOnSurfaceVariant)
                 .multilineTextAlignment(.center)

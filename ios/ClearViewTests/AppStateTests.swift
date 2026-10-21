@@ -4,14 +4,42 @@ import XCTest
 @MainActor
 final class AppStateTests: XCTestCase {
 
-    func testMediaLibraryRestoresLegacyStateWithoutAddingChannels() throws {
+    /// This test used to assert the OPPOSITE — that a restored library with no channels stayed
+    /// empty. That is the behaviour the product asked to change: the tab is meant to open with the
+    /// default channel on it, and seeding it on a first run only meant every device whose library
+    /// was written before the default existed had no way to get it back. What replaces the old
+    /// assertion is the case that still matters — a reader who removed it gets an empty list.
+    func testMediaLibrarySeedsItsDefaultChannelForALibraryThatNeverHadOne() throws {
         let suite = "MediaMigration.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(Data(#"{"channels":[],"playlists":[],"recent":[],"saved":[],"feed":[]}"#.utf8), forKey: "media.library.v1")
         let model = MediaLibrary(defaults: defaults)
-        XCTAssertTrue(model.state.channels.isEmpty)
+        XCTAssertEqual(model.state.channels.map(\.handle), ["SafinaSociety"])
         XCTAssertNil(model.state.watchProgress)
+    }
+
+    func testMediaLibraryNeverPutsTheDefaultChannelBackOnceTheReaderRemovesIt() {
+        let suite = "MediaDefaultRemoved.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MediaLibrary(defaults: defaults)
+        XCTAssertEqual(model.state.channels.count, 1)
+        model.subscribe(MediaLibrary.defaultChannel)
+        XCTAssertTrue(model.state.channels.isEmpty)
+        // Relaunched: an empty list here is the reader's decision, not a gap to fill in.
+        XCTAssertTrue(MediaLibrary(defaults: defaults).state.channels.isEmpty)
+    }
+
+    func testMediaLibraryLeavesAReadersOwnChannelListAlone() {
+        let suite = "MediaOwnChannels.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MediaLibrary(defaults: defaults)
+        model.subscribe(DirectoryChannel(id: "UCother", platform: "youtube", handle: "other", name: "Other",
+            iconUrl: nil, url: "https://www.youtube.com/channel/UCother", categoryId: nil, subcategoryId: nil, sort: 1))
+        model.persist()
+        XCTAssertEqual(MediaLibrary(defaults: defaults).state.channels.map(\.handle), ["SafinaSociety", "other"])
     }
 
     func testMediaFiltersUseRealProgressAndHideState() {

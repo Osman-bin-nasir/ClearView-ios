@@ -6,19 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXCopyFilesBuildPhase section */
-		BB000000000000000000000D = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (BB000000000000000000000E, CC000000000000000000000E, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXBuildFile section */
-        DD0000000000000000000001 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000003 /* YouTubeKit */; };
-		CC000000000000000000000E = {isa = PBXBuildFile; fileRef = CC0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		BB000000000000000000000E = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BB000000000000000000000E /* ClearViewActivityMonitor.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000002 /* ClearViewActivityMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CC000000000000000000000E /* ClearViewSafari.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000002 /* ClearViewSafari.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DD0000000000000000000001 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000003 /* YouTubeKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		CC000000000000000000000B = {isa = PBXContainerItemProxy; containerPortal = AA0000000000000000000001; proxyType = 1; remoteGlobalIDString = CC0000000000000000000001; remoteInfo = ClearViewSafari; };
-		BB000000000000000000000B = {isa = PBXContainerItemProxy; containerPortal = AA0000000000000000000001; proxyType = 1; remoteGlobalIDString = BB0000000000000000000001; remoteInfo = ClearViewActivityMonitor; };
 		AA000000000000000000002A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = AA0000000000000000000001 /* Project object */;
@@ -33,21 +27,46 @@
 			remoteGlobalIDString = AA0000000000000000000005;
 			remoteInfo = ClearView;
 		};
+		BB000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BB0000000000000000000001;
+			remoteInfo = ClearViewActivityMonitor;
+		};
+		CC000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CC0000000000000000000001;
+			remoteInfo = ClearViewSafari;
+		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		BB000000000000000000000D /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BB000000000000000000000E /* ClearViewActivityMonitor.appex in Embed App Extensions */,
+				CC000000000000000000000E /* ClearViewSafari.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		CC0000000000000000000002 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearViewSafari.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		BB0000000000000000000002 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearViewActivityMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000006 /* ClearView.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClearView.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000021 /* ClearViewTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClearViewTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000031 /* ClearViewUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClearViewUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0000000000000000000002 /* ClearViewActivityMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearViewActivityMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC0000000000000000000002 /* ClearViewSafari.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClearViewSafari.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		CC0000000000000000000003 = {isa = PBXFileSystemSynchronizedRootGroup; path = ClearViewSafari; sourceTree = "<group>"; };
-		CC0000000000000000000004 = {isa = PBXFileSystemSynchronizedRootGroup; path = SafariControlsShared; sourceTree = "<group>"; };
-		BB0000000000000000000003 = {isa = PBXFileSystemSynchronizedRootGroup; path = ClearViewActivityMonitor; sourceTree = "<group>"; };
-		BB0000000000000000000004 = {isa = PBXFileSystemSynchronizedRootGroup; path = DeviceControlsShared; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* ClearViewApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ClearViewApp;
@@ -63,16 +82,34 @@
 			path = ClearViewUITests;
 			sourceTree = "<group>";
 		};
+		BB0000000000000000000003 /* ClearViewActivityMonitor */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ClearViewActivityMonitor;
+			sourceTree = "<group>";
+		};
+		BB0000000000000000000004 /* DeviceControlsShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DeviceControlsShared;
+			sourceTree = "<group>";
+		};
+		CC0000000000000000000003 /* ClearViewSafari */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ClearViewSafari;
+			sourceTree = "<group>";
+		};
+		CC0000000000000000000004 /* SafariControlsShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SafariControlsShared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		CC0000000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		BB0000000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000008 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-                DD0000000000000000000001 /* YouTubeKit in Frameworks */,
+				DD0000000000000000000001 /* YouTubeKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +121,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000000034 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB0000000000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC0000000000000000000006 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,8 +173,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		CC0000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = CC000000000000000000000A; buildPhases = (CC0000000000000000000005, CC0000000000000000000006, CC0000000000000000000007, ); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (CC0000000000000000000003, CC0000000000000000000004, ); name = ClearViewSafari; productName = ClearViewSafari; productReference = CC0000000000000000000002; productType = "com.apple.product-type.app-extension"; };
-		BB0000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = BB000000000000000000000A; buildPhases = (BB0000000000000000000005, BB0000000000000000000006, BB0000000000000000000007, ); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (BB0000000000000000000003, BB0000000000000000000004, ); name = ClearViewActivityMonitor; productName = ClearViewActivityMonitor; productReference = BB0000000000000000000002; productType = "com.apple.product-type.app-extension"; };
 		AA0000000000000000000005 /* ClearView */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AA0000000000000000000010 /* Build configuration list for PBXNativeTarget "ClearView" */;
@@ -137,16 +186,18 @@
 			buildRules = (
 			);
 			dependencies = (
-				BB000000000000000000000C,
-				CC000000000000000000000C,
+				BB000000000000000000000C /* PBXTargetDependency */,
+				CC000000000000000000000C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA0000000000000000000015 /* ClearViewApp */,
 				BB0000000000000000000004 /* DeviceControlsShared */,
 				CC0000000000000000000004 /* SafariControlsShared */,
 			);
-            packageProductDependencies = (DD0000000000000000000003 /* YouTubeKit */, );
 			name = ClearView;
+			packageProductDependencies = (
+				DD0000000000000000000003 /* YouTubeKit */,
+			);
 			productName = ClearView;
 			productReference = AA0000000000000000000006 /* ClearView.app */;
 			productType = "com.apple.product-type.application";
@@ -193,6 +244,48 @@
 			productReference = AA0000000000000000000031 /* ClearViewUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		BB0000000000000000000001 /* ClearViewActivityMonitor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB000000000000000000000A /* Build configuration list for PBXNativeTarget "ClearViewActivityMonitor" */;
+			buildPhases = (
+				BB0000000000000000000005 /* Sources */,
+				BB0000000000000000000006 /* Frameworks */,
+				BB0000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BB0000000000000000000003 /* ClearViewActivityMonitor */,
+				BB0000000000000000000004 /* DeviceControlsShared */,
+			);
+			name = ClearViewActivityMonitor;
+			productName = ClearViewActivityMonitor;
+			productReference = BB0000000000000000000002 /* ClearViewActivityMonitor.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		CC0000000000000000000001 /* ClearViewSafari */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC000000000000000000000A /* Build configuration list for PBXNativeTarget "ClearViewSafari" */;
+			buildPhases = (
+				CC0000000000000000000005 /* Sources */,
+				CC0000000000000000000006 /* Frameworks */,
+				CC0000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CC0000000000000000000003 /* ClearViewSafari */,
+				CC0000000000000000000004 /* SafariControlsShared */,
+			);
+			name = ClearViewSafari;
+			productName = ClearViewSafari;
+			productReference = CC0000000000000000000002 /* ClearViewSafari.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -225,9 +318,11 @@
 			);
 			mainGroup = AA0000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DD0000000000000000000002 /* XCRemoteSwiftPackageReference "YouTubeKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
-            packageReferences = (DD0000000000000000000002 /* YouTubeKit */, );
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -241,8 +336,6 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		CC0000000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		BB0000000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -258,6 +351,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000000035 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB0000000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC0000000000000000000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -289,8 +396,6 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		CC0000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		BB0000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		AA0000000000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -312,11 +417,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB0000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC0000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		CC000000000000000000000C = {isa = PBXTargetDependency; target = CC0000000000000000000001; targetProxy = CC000000000000000000000B; };
-		BB000000000000000000000C = {isa = PBXTargetDependency; target = BB0000000000000000000001; targetProxy = BB000000000000000000000B; };
 		AA0000000000000000000029 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = AA0000000000000000000005 /* ClearView */;
@@ -327,28 +444,19 @@
 			target = AA0000000000000000000005 /* ClearView */;
 			targetProxy = AA000000000000000000003A /* PBXContainerItemProxy */;
 		};
+		BB000000000000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BB0000000000000000000001 /* ClearViewActivityMonitor */;
+			targetProxy = BB000000000000000000000B /* PBXContainerItemProxy */;
+		};
+		CC000000000000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CC0000000000000000000001 /* ClearViewSafari */;
+			targetProxy = CC000000000000000000000B /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-        DD0000000000000000000002 /* YouTubeKit */ = {
-            isa = XCRemoteSwiftPackageReference;
-            repositoryURL = "https://github.com/alexeichhorn/YouTubeKit.git";
-            requirement = { kind = exactVersion; version = 0.4.9; };
-        };
-/* End XCRemoteSwiftPackageReference section */
-/* Begin XCSwiftPackageProductDependency section */
-        DD0000000000000000000003 /* YouTubeKit */ = {
-            isa = XCSwiftPackageProductDependency;
-            package = DD0000000000000000000002 /* YouTubeKit */;
-            productName = YouTubeKit;
-        };
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCBuildConfiguration section */
-		CC0000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Safari.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RVDV9C73X4; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "Safari-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.safari; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
-		CC0000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Safari.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RVDV9C73X4; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "Safari-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.safari; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
-		BB0000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ActivityMonitor.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RVDV9C73X4; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "ActivityMonitor-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.activitymonitor; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
-		BB0000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ActivityMonitor.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RVDV9C73X4; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "ActivityMonitor-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.activitymonitor; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
 		AA0000000000000000000011 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -403,12 +511,11 @@
 		AA0000000000000000000013 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ClearView.entitlements;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				INFOPLIST_FILE = Info.plist;
+				CODE_SIGN_ENTITLEMENTS = ClearView.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -416,6 +523,7 @@
 					"$(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -442,12 +550,11 @@
 		AA0000000000000000000014 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ClearView.entitlements;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				INFOPLIST_FILE = Info.plist;
+				CODE_SIGN_ENTITLEMENTS = ClearView.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -455,6 +562,7 @@
 					"$(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -484,8 +592,8 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -519,8 +627,8 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -552,8 +660,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -571,8 +679,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = RVDV9C73X4;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -586,11 +694,113 @@
 			};
 			name = Release;
 		};
+		BB0000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ActivityMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ActivityMonitor-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.activitymonitor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BB0000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ActivityMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ActivityMonitor-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.activitymonitor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		CC0000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Safari.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Safari-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.safari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CC0000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Safari.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RVDV9C73X4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Safari-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.muddassir.clearview.safari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		CC000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (CC0000000000000000000008, CC0000000000000000000009, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		BB000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (BB0000000000000000000008, BB0000000000000000000009, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		AA000000000000000000000F /* Build configuration list for PBXProject "ClearView" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -627,7 +837,44 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		BB000000000000000000000A /* Build configuration list for PBXNativeTarget "ClearViewActivityMonitor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB0000000000000000000008 /* Debug */,
+				BB0000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CC000000000000000000000A /* Build configuration list for PBXNativeTarget "ClearViewSafari" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC0000000000000000000008 /* Debug */,
+				CC0000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DD0000000000000000000002 /* XCRemoteSwiftPackageReference "YouTubeKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/alexeichhorn/YouTubeKit.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.4.9;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DD0000000000000000000003 /* YouTubeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DD0000000000000000000002 /* XCRemoteSwiftPackageReference "YouTubeKit" */;
+			productName = YouTubeKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AA0000000000000000000001 /* Project object */;
 }

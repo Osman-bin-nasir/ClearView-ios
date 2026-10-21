@@ -263,11 +263,11 @@ private struct VerseDisplay: View {
 
             // Arabic verse. Renders RTL from the script itself.
             if !verse.arabicText.isEmpty {
-                Text(verse.arabicText)
-                    .font(QuranTypography.font(
-                        baseSize: QuranTypography.readerBaseSize,
-                        scale: model.arabicTextScale
-                    ))
+                QuranTypography.arabic(
+                    verse.arabicText,
+                    baseSize: QuranTypography.readerBaseSize,
+                    scale: model.arabicTextScale
+                )
                     .lineSpacing(QuranTypography.lineSpacing(
                         baseSize: QuranTypography.readerBaseSize,
                         scale: model.arabicTextScale

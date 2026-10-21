@@ -8,10 +8,14 @@ struct SurahReaderView: View {
     @State private var model: SurahReaderModel
     @State private var autoScroll = QuranReaderAutoScroll()
     @State private var audio = VerseAudioPlayer()
-    @State private var fullScreen = false
     @State private var showSearch = false
     @State private var showTextSize = false
-    @State private var showScrollSpeeds = false
+    /// Whether the surah's identity block and the reading-mode switch are showing.
+    ///
+    /// Android's `readerHeaderOpen` (§2), and open by default for the same reason:
+    /// opening a surah you have not opened before with its name and its length
+    /// already folded away is being dropped into the middle of something.
+    @State private var headerOpen = true
     @State private var selectedAyah: Int32?
     @State private var listeningAyah: Int32?
     @State private var copiedAyah: Int32?
@@ -23,10 +27,9 @@ struct SurahReaderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            readingControls
+            if headerOpen { surahBanner }
             if showSearch { searchField }
             if showTextSize { textSizeControl }
-            if showScrollSpeeds { scrollSpeedControl }
             content
         }
         .background(Color.cvBackground)
@@ -36,20 +39,93 @@ struct SurahReaderView: View {
         .navigationTitle(model.surah.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
-        .toolbar(fullScreen ? .hidden : .visible, for: .navigationBar)
-        .toolbar(fullScreen ? .hidden : .visible, for: .tabBar)
         .toolbarBackground(Color.cvBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .statusBarHidden(fullScreen)
+        // ── The reader's top bar (§1) ──
+        //
+        // The back arrow and the surah's name are the navigation bar's own, and
+        // the four controls beside them are the reader's: fold the identity block
+        // away, search the surah, size the text, start it scrolling. Android draws
+        // this row itself because it has no navigation bar to put it in; on iOS the
+        // bar is already there with the arrow and the name, so the same row is the
+        // same row — one bar, not a bar plus a strip under it.
+        //
+        // Order matters and follows Android: the fold comes BEFORE search, because
+        // a bigger page is the first thing a reader wants in a long surah and search
+        // is what they want in a specific one.
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { dismiss() } label: { Image(systemName: "chevron.left") }
                     .accessibilityLabel("Back").accessibilityIdentifier("BackButton")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { model.toggleStar() } label: {
-                    Image(systemName: model.isStarred ? "star.fill" : "star")
-                }.accessibilityLabel(model.isStarred ? "Remove surah star" : "Star this surah")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                barControl(
+                    headerOpen ? "chevron.up" : "chevron.down",
+                    label: headerOpen ? "Hide surah details" : "Show surah details",
+                    id: "reader.headerToggle",
+                    // Accent-tinted while folded, so the icon says which state a
+                    // second tap will leave — Android's `readerHeaderOpen` tint.
+                    active: !headerOpen
+                ) { autoScroll.pause(); headerOpen.toggle() }
+
+                barControl("magnifyingglass", label: "Search verses", id: "reader.search",
+                           active: showSearch) {
+                    autoScroll.pause()
+                    showSearch.toggle()
+                    if showSearch { showTextSize = false }
+                    else { model.search = ""; searchFocused = false }
+                }
+
+                barControl("textformat.size", label: "Text size", id: "reader.textSize",
+                           active: showTextSize) {
+                    autoScroll.pause()
+                    searchFocused = false
+                    showTextSize.toggle()
+                }
+
+                // Hands-free reading: a MENU of paces, not a row of buttons held
+                // open under the bar (Android's `DropdownMenu`, §1). The row cost a
+                // line of the page for the whole time it was showing, and the reader
+                // picks a pace once and then reads for an hour — so the choices
+                // appear when asked for and leave when one is chosen, which a menu
+                // does by itself.
+                //
+                // Off is a row here rather than a separate switch, the way Android
+                // lists it among the paces, and the check mark is the same control
+                // that changes it — so "what is the page doing" and "make it do
+                // something else" are one tap apart rather than two screens apart.
+                Menu {
+                    Section("Scroll speed") {
+                        Button {
+                            searchFocused = false
+                            autoScroll.pause()
+                        } label: {
+                            if autoScroll.isRunning { Text("Off") }
+                            else { Label("Off", systemImage: "checkmark") }
+                        }
+                        .accessibilityIdentifier("reader.speed.Off")
+
+                        ForEach(QuranAutoScrollSpeed.allCases) { speed in
+                            Button {
+                                searchFocused = false
+                                setScrollSpeed(speed)
+                            } label: {
+                                if autoScroll.isRunning && autoScroll.speed == speed {
+                                    Label(speed.rawValue, systemImage: "checkmark")
+                                } else {
+                                    Text(speed.rawValue)
+                                }
+                            }
+                            .accessibilityIdentifier("reader.speed.\(speed.rawValue)")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "speedometer").font(.system(size: 17))
+                        .foregroundStyle(autoScroll.isRunning ? Color.cvPrimary : Color.cvOnSurface)
+                }
+                .accessibilityLabel("Auto-scroll speed")
+                .accessibilityIdentifier("reader.autoScroll")
+                .accessibilityValue(autoScroll.isRunning ? "\(autoScroll.speed.rawValue), scrolling" : "Paused")
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -79,61 +155,112 @@ struct SurahReaderView: View {
         }
     }
 
-    private var readingControls: some View {
-        HStack(spacing: 0) {
-            Button {
-                autoScroll.pause()
-                model.language.toggle()
-                selectedAyah = nil
-            } label: {
-                Text(model.language == .arabic ? "ع" : "A")
-                    .font(.system(size: 23, weight: .medium))
-                    .frame(maxWidth: .infinity, minHeight: 48)
+    /// The surah's identity and the reading-mode switch, pinned above the text.
+    ///
+    /// Android's `SurahBanner`, control for control (§2): the name, its meaning,
+    /// the surah's number and how many ayahs it holds, and then the two ways it
+    /// can be read as two buttons rather than as one that toggles. A toggle has to
+    /// be read before it is understood, and which text is on screen is the one
+    /// thing here a reader must never have to work out.
+    ///
+    /// It is pinned rather than scrolled, which is why the fold control in the top
+    /// bar exists: this block costs its height on every one of a read that may be
+    /// a hundred screenfuls. The surah's name stays in the top bar while it is
+    /// folded, so folding gives up height and not the sense of where you are.
+    private var surahBanner: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Text(model.surah.name).font(.title3.weight(.bold))
+                Button { autoScroll.pause(); model.toggleStar() } label: {
+                    Image(systemName: model.isStarred ? "star.fill" : "star").font(.system(size: 15))
+                }
+                .accessibilityLabel(model.isStarred ? "Remove surah star" : "Star this surah")
+                .accessibilityIdentifier("reader.star")
+                Spacer(minLength: 0)
             }
-            .accessibilityLabel("Language mode")
-            .accessibilityValue(model.language.rawValue)
-            .accessibilityHint("Switch between Arabic and English")
-            .accessibilityIdentifier("reader.language")
-
-            control(fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                    label: fullScreen ? "Exit full screen" : "Full screen", id: "reader.fullScreen", active: fullScreen) {
-                autoScroll.pause()
-                fullScreen.toggle()
+            if !model.surah.translation.isEmpty {
+                Text(model.surah.translation)
+                    .font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
             }
-            control("magnifyingglass", label: "Search verses", id: "reader.search", active: showSearch) {
-                autoScroll.pause()
-                showSearch.toggle()
-                if showSearch { showTextSize = false; showScrollSpeeds = false }
-                else { model.search = ""; searchFocused = false }
-            }
-            control("textformat.size", label: "Text size", id: "reader.textSize", active: showTextSize) {
-                autoScroll.pause()
-                searchFocused = false
-                showTextSize.toggle()
-                showScrollSpeeds = false
-            }
-            control(autoScroll.isRunning ? "pause.circle.fill" : "arrow.down.circle",
-                    label: autoScroll.isRunning ? "Pause auto-scroll" : "Auto-scroll",
-                    id: "reader.autoScroll", active: autoScroll.isRunning || showScrollSpeeds) {
-                searchFocused = false
-                if autoScroll.isRunning { autoScroll.pause() }
-                else { showScrollSpeeds.toggle(); showTextSize = false }
-            }
-            .accessibilityValue(autoScroll.isRunning ? "\(autoScroll.speed.rawValue), scrolling" : "Paused")
+            Text("Surah \(model.surah.number) · \(model.surah.ayahCount) ayahs")
+                .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
+            HStack(spacing: 8) {
+                modeButton(.arabic)
+                modeButton(.english)
+            }.padding(.top, 8)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.cvPrimary)
+        .foregroundStyle(Color.cvOnSurface)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20).padding(.vertical, 10)
         .background(Color.cvSurfaceContainerLow)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.cvOutlineVariant.opacity(0.4)).frame(height: 0.5) }
+        .accessibilityIdentifier("reader.banner")
     }
 
-    private func control(_ symbol: String, label: String, id: String, active: Bool,
-                         action: @escaping () -> Void) -> some View {
+    /// One of the two reading modes — Android's `QuranSegment`.
+    ///
+    /// The selected one is filled with the accent rather than merely bolded: it is
+    /// a statement about what the page below is, and it has to be unmistakable at
+    /// a glance from the text it describes.
+    private func modeButton(_ mode: QuranReadingMode) -> some View {
+        let selected = model.language == mode
+        return Button {
+            autoScroll.pause()
+            model.language = mode
+            selectedAyah = nil
+        } label: {
+            Text(mode == .arabic ? "Arabic" : "English")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 38)
+                .foregroundStyle(selected ? Color.cvOnPrimary : Color.cvOnSurfaceVariant)
+                .background(selected ? Color.cvPrimary : Color.cvSurfaceContainerHigh, in: Capsule())
+        }
+        .accessibilityIdentifier(mode == .arabic ? "reader.mode.arabic" : "reader.mode.english")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+
+    /// One control in the reader's top bar. Tinted with the accent while it is
+    /// doing something, so a control that is on never has to be guessed at.
+    private func barControl(_ symbol: String, label: String, id: String, active: Bool,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 19))
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(active ? Color.cvPrimary.opacity(0.1) : .clear)
+            Image(systemName: symbol).font(.system(size: 17))
+                .foregroundStyle(active ? Color.cvPrimary : Color.cvOnSurface)
         }.accessibilityLabel(label).accessibilityIdentifier(id)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.state {
+        case .loading:
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .ready:
+            ReaderContent(
+                ayahs: model.filteredAyahs, basmala: model.basmala,
+                restoreTo: model.restorePosition, search: model.search,
+                arabicTextScale: model.arabicTextScale, language: model.language,
+                selectedAyah: selectedAyah, copiedAyah: copiedAyah, autoScroll: autoScroll,
+                isBookmarked: { model.isBookmarked(ayahNumber: $0) },
+                onToggleBookmark: { model.toggleBookmark(ayahNumber: $0) },
+                onTopAyahChanged: { model.rememberTopAyah($0) },
+                onSelect: {
+                    autoScroll.pause()
+                    searchFocused = false
+                    copiedAyah = nil
+                    selectedAyah = selectedAyah == $0 ? nil : $0
+                },
+                onCopy: {
+                    UIPasteboard.general.string = model.copyText(for: $0)
+                    copiedAyah = $0.id
+                },
+                onListen: { listen(to: $0) }
+            )
+        case .failed(let message):
+            CVEmptyState(title: "Unable to load this surah", message: message, symbol: "exclamationmark.triangle")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private var searchField: some View {
@@ -178,58 +305,15 @@ struct SurahReaderView: View {
         }.buttonStyle(.plain).padding(.horizontal, 16).background(Color.cvSurfaceContainer)
     }
 
-    private var scrollSpeedControl: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                ForEach(QuranAutoScrollSpeed.allCases) { speed in
-                    Button {
-                        searchFocused = false
-                        autoScroll.speed = speed
-                        autoScroll.start()
-                    } label: {
-                        Text(speed.rawValue).font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                            .foregroundStyle(autoScroll.speed == speed ? Color.cvOnPrimary : Color.cvOnSurfaceVariant)
-                            .background(autoScroll.speed == speed ? Color.cvPrimary : Color.cvSurfaceContainerHigh, in: Capsule())
-                    }.accessibilityIdentifier("reader.speed.\(speed.rawValue)")
-                }
-            }.buttonStyle(.plain)
-            Text(autoScroll.isRunning ? "Tap anywhere on the page to pause" : "Choose a speed to start scrolling")
-                .font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)
-                .accessibilityIdentifier("reader.scroll.status")
-        }.padding(.horizontal, 16).padding(.vertical, 8).background(Color.cvSurfaceContainer)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch model.state {
-        case .loading:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .ready:
-            ReaderContent(
-                surah: model.surah, ayahs: model.filteredAyahs, basmala: model.basmala,
-                restoreTo: model.restorePosition, search: model.search,
-                arabicTextScale: model.arabicTextScale, language: model.language,
-                selectedAyah: selectedAyah, copiedAyah: copiedAyah, autoScroll: autoScroll,
-                isBookmarked: { model.isBookmarked(ayahNumber: $0) },
-                onToggleBookmark: { model.toggleBookmark(ayahNumber: $0) },
-                onTopAyahChanged: { model.rememberTopAyah($0) },
-                onSelect: {
-                    autoScroll.pause()
-                    searchFocused = false
-                    copiedAyah = nil
-                    selectedAyah = selectedAyah == $0 ? nil : $0
-                },
-                onCopy: {
-                    UIPasteboard.general.string = model.copyText(for: $0)
-                    copiedAyah = $0.id
-                },
-                onListen: { listen(to: $0) }
-            )
-        case .failed(let message):
-            CVEmptyState(title: "Unable to load this surah", message: message, symbol: "exclamationmark.triangle")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+    /// Starts the page moving at `speed`, from the reader's own top bar menu.
+    ///
+    /// `pause()` and `start()` on the driver are not symmetric with `speed`: the
+    /// pace is a property of the driver that outlives a run, so choosing a pace is
+    /// always "set it, then start" — and the menu's check mark reads that same
+    /// property, which is why the two cannot drift apart.
+    private func setScrollSpeed(_ speed: QuranAutoScrollSpeed) {
+        autoScroll.speed = speed
+        autoScroll.start()
     }
 
     private func listen(to ayah: SurahReaderModel.Ayah) {
@@ -287,7 +371,6 @@ struct SurahReaderView: View {
 /// still opened at "2:1").
 private struct ReaderContent: View {
 
-    let surah: SurahSummary
     let ayahs: [SurahReaderModel.Ayah]
     /// The basmala, from the edition's own 1:1. Empty for At-Tawba, and empty
     /// when the Arabic is not on the device.
@@ -351,7 +434,7 @@ private struct ReaderContent: View {
         // reason.
         ScrollViewReader { proxy in
             List {
-                SurahHeader(surah: surah, basmala: language == .arabic ? basmala : "", arabicTextScale: arabicTextScale)
+                SurahBasmala(basmala: language == .arabic ? basmala : "", arabicTextScale: arabicTextScale)
                     // Item 0 is the header — the top of the surah, which the shared
                     // reading-position rule already reads as "save nothing".
                     .id(Int32(0))
@@ -501,21 +584,27 @@ private enum ReaderMetrics {
     static let verseGap: CGFloat = 13
 }
 
-/// The surah's number, name, meaning and length — and, under them, the basmala.
+/// The basmala that opens the surah — the one line above verse 1.
 ///
-/// The basmala rides in this row rather than as one of its own because it is not
-/// an ayah. A row of its own would give it a row id, and the row ids here are what
-/// the reading position is measured in (a surah is counted in ayahs) — a synthetic
-/// id would have to be argued about in every one of those rules. As the last thing
-/// above verse 1 it is also simply where it belongs on the page.
+/// The surah's number, name, meaning and length are NOT here any more: they live in
+/// the banner pinned above the text (`SurahBanner`), which is where Android keeps
+/// them, so the page itself begins with the line the Quran itself begins with
+/// rather than repeating a heading that is already on screen. That also means the
+/// banner can be folded away without the identity disappearing — the same two
+/// pieces Android split into `SurahBanner` and `SurahHead`.
+///
+/// The basmala rides in the header row rather than as a row of its own because it
+/// is not an ayah. A row of its own would give it a row id, and the row ids here
+/// are what the reading position is measured in (a surah is counted in ayahs) — a
+/// synthetic id would have to be argued about in every one of those rules. As the
+/// last thing above verse 1 it is also simply where it belongs on the page.
 ///
 /// Rendered from the edition's own 1:1, never typed here, and centred and tinted
 /// with the accent exactly as Android's `SurahHead` draws it. Like Android, it is
 /// omitted only for At-Tawba — which is why Al-Faatiha shows it twice (it is that
 /// surah's own first ayah as well); that is the Android behaviour, deliberately
 /// kept rather than quietly special-cased here.
-private struct SurahHeader: View {
-    let surah: SurahSummary
+private struct SurahBasmala: View {
     let basmala: String
     let arabicTextScale: Double
 
@@ -527,22 +616,12 @@ private struct SurahHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(surah.name)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Color.cvPrimary)
-            Text(surah.translation)
-                .font(.subheadline)
-                .foregroundStyle(Color.cvOnSurfaceVariant)
-            Text("Surah \(surah.number) · \(surah.ayahCount) ayahs")
-                .font(.caption)
-                .foregroundStyle(Color.cvOnSurfaceVariant)
-
             if !basmala.isEmpty {
-                Text(basmala)
-                    .font(QuranTypography.font(
-                        baseSize: Self.basmalaBaseSize,
-                        scale: arabicTextScale
-                    ))
+                QuranTypography.arabic(
+                    basmala,
+                    baseSize: Self.basmalaBaseSize,
+                    scale: arabicTextScale
+                )
                     .lineSpacing(QuranTypography.lineSpacing(
                         baseSize: Self.basmalaBaseSize,
                         scale: arabicTextScale
@@ -557,7 +636,7 @@ private struct SurahHeader: View {
                     .padding(.top, 20)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .padding(.bottom, 4)
     }
 }
@@ -611,13 +690,31 @@ private struct AyahVerse: View {
     }
 
     private var scripture: some View {
+        // Both halves go through `QuranTypography.arabic` rather than one shared
+        // `.font` below the concatenation: the ornament is scripture too, and a
+        // surface that set the face only on the verse would draw the ayah's own
+        // number in the system font.
         (
-            Text(ayah.arabic + "  ").foregroundStyle(Color.cvOnSurface)
-            + Text(QuranTypography.ayahOrnament(ayah.id))
+            QuranTypography.arabic(
+                ayah.arabic + "  ",
+                baseSize: QuranTypography.readerBaseSize,
+                scale: arabicTextScale
+            )
+                .foregroundStyle(Color.cvOnSurface)
+            + QuranTypography.arabic(
+                QuranTypography.ayahOrnament(ayah.id),
+                baseSize: QuranTypography.readerBaseSize,
+                scale: arabicTextScale
+            )
                 .foregroundStyle(isBookmarked ? Color.cvPrimary : Color.cvOnSurfaceVariant)
         )
-        .font(QuranTypography.font(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
-        .lineSpacing(QuranTypography.lineSpacing(baseSize: QuranTypography.readerBaseSize, scale: arabicTextScale))
+        // The line box is set on the concatenation, not inside `arabic`:
+        // `lineSpacing` is a `View` modifier, so this is the only place that can
+        // space the verse and its ornament as one paragraph.
+        .lineSpacing(QuranTypography.lineSpacing(
+            baseSize: QuranTypography.readerBaseSize,
+            scale: arabicTextScale
+        ))
         .multilineTextAlignment(.center)
         .environment(\.layoutDirection, .rightToLeft)
         .frame(maxWidth: .infinity)

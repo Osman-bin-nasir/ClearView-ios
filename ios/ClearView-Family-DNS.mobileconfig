@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ClearView Family DNS — the same Cloudflare for Families encrypted DNS that
+  FamilyDNSView.swift installs with NEDNSSettingsManager, expressed as a
+  configuration profile instead.
+
+  Why this file exists: NEDNSSettingsManager needs the
+  com.apple.developer.networking.networkextension entitlement, which Apple issues
+  only to paid-team members and only after approval, so the in-app installer is
+  inactive in this demo build (that key was removed from ClearView.entitlements).
+  A DNS settings profile is applied by iOS itself: no developer account, no
+  entitlement, nothing signed by Apple. Values below are copied from
+  FamilyDNSView.swift — endpoint https://family.cloudflare-dns.com/dns-query and
+  the servers 1.1.1.3 / 1.0.0.3 — so the filtering behaviour matches.
+
+  Install: AirDrop or email this file to the iPhone, tap it, then
+  Settings -> General -> VPN & Device Management -> install the downloaded profile.
+  It appears as "Not Signed" (unsigned profiles can be installed by hand; only
+  MDM-pushed ones must be signed and encrypted). Then choose it under
+  Settings -> General -> VPN & Device Management -> DNS.
+  Remove: Settings -> General -> VPN & Device Management -> ClearView Family DNS -> Remove.
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>DNSSettings</key>
+			<dict>
+				<key>DNSProtocol</key>
+				<string>HTTPS</string>
+				<key>ServerAddresses</key>
+				<array>
+					<string>1.1.1.3</string>
+					<string>1.0.0.3</string>
+				</array>
+				<key>ServerURL</key>
+				<string>https://family.cloudflare-dns.com/dns-query</string>
+			</dict>
+			<key>PayloadDisplayName</key>
+			<string>ClearView Family DNS</string>
+			<key>PayloadIdentifier</key>
+			<string>com.muddassir.clearview.familydns.dnssettings</string>
+			<key>PayloadType</key>
+			<string>com.apple.dnsSettings.managed</string>
+			<key>PayloadUUID</key>
+			<string>88FF06CC-AA7B-4062-B296-F1391F639BBF</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDisplayName</key>
+	<string>ClearView Family DNS</string>
+	<key>PayloadIdentifier</key>
+	<string>com.muddassir.clearview.familydns</string>
+	<key>PayloadOrganization</key>
+	<string>ClearView</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>540FAF6B-ED10-4380-B1D3-9CD303E8EF37</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
