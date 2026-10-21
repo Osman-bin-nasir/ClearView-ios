@@ -18,6 +18,7 @@ struct RootView: View {
     @State private var controls = DeviceControlsController.shared
     @State private var showFocusGate = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance") private var appearance = "dark"
 
     init() {
@@ -39,7 +40,7 @@ struct RootView: View {
                     Label {
                         Text("Apps")
                     } icon: {
-                        Image(uiImage: router.selectedTab == .apps ? Self.selectedAppsIcon : Self.unselectedAppsIcon)
+                        Image(uiImage: appsTabIcon)
                             .renderingMode(.original)
                     }
                 }
@@ -85,18 +86,34 @@ struct RootView: View {
     private static let selectedAppsIcon = appsIcon(selected: true)
     private static let unselectedAppsIcon = appsIcon(selected: false)
 
-    private static func appsIcon(selected: Bool) -> UIImage {
+    private static let selectedAppsLightIcon = appsIcon(selected: true, light: true)
+    private static let unselectedAppsLightIcon = appsIcon(selected: false, light: true)
+
+    private var appsTabIcon: UIImage {
+        let light = appearance == "light" || (appearance == "system" && colorScheme == .light)
+        if router.selectedTab == .apps { return light ? Self.selectedAppsLightIcon : Self.selectedAppsIcon }
+        return light ? Self.unselectedAppsLightIcon : Self.unselectedAppsIcon
+    }
+
+    private static func appsIcon(selected: Bool, light: Bool = false) -> UIImage {
         let colors: [UIColor] = selected ? [
             UIColor(red: 0.15, green: 0.76, blue: 0.57, alpha: 1), .white,
             UIColor(red: 0.97, green: 0.76, blue: 0.29, alpha: 1),
             UIColor(red: 0.95, green: 0.45, blue: 0.46, alpha: 1)
-        ] : Array(repeating: .white, count: 4)
+        ] : Array(repeating: light ? UIColor(cvRGB: 0x3F4947) : .white, count: 4)
         return UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { _ in
             for index in 0..<4 {
                 colors[index].setFill()
                 let rect = CGRect(x: 2.5 + Double(index % 2) * 10.5,
                                   y: 2.5 + Double(index / 2) * 10.5, width: 8.5, height: 8.5)
-                UIBezierPath(roundedRect: rect, cornerRadius: 1.8).fill()
+                let tile = UIBezierPath(roundedRect: rect, cornerRadius: 1.8)
+                tile.fill()
+                if selected && light && index == 1 {
+                    // Keep the white tile distinct from the light tab surface.
+                    UIColor(cvRGB: 0x59635F).setStroke()
+                    tile.lineWidth = 0.65
+                    tile.stroke()
+                }
             }
         }.withRenderingMode(.alwaysOriginal)
     }
