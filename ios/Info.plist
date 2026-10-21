@@ -6,6 +6,10 @@
     <string>ClearView</string>
     <key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to unlock your phone-limit session.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Use the camera on websites in Apps when you choose to take a photo or video.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Use the microphone on websites in Apps when you choose to record audio or video.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

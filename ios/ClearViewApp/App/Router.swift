@@ -15,14 +15,11 @@ import Foundation
 @Observable
 final class Router {
 
-    /// The four bottom-bar destinations, in the Android app's order.
-    ///
-    /// Android names them `MainTab.QURAN / MEDIA / GOODPOST / MORE`; the More tab
-    /// holds a nested "Protection" page, which lives inside `MoreView` rather
-    /// than being a fifth tab — exactly as it does on Android.
+    /// Apps sits beside Media; Protection remains inside More.
     enum Tab: Hashable {
         case quran
         case media
+        case apps
         case goodPost
         case more
     }
