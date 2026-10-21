@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The five-tab shell, with the in-app websites beside the curated Media feed.
 ///
@@ -34,7 +35,14 @@ struct RootView: View {
                 .tag(Router.Tab.media)
 
             AppsHubView()
-                .tabItem { Label("Apps", systemImage: "square.grid.2x2.fill") }
+                .tabItem {
+                    Label {
+                        Text("Apps")
+                    } icon: {
+                        Image(uiImage: router.selectedTab == .apps ? Self.selectedAppsIcon : Self.unselectedAppsIcon)
+                            .renderingMode(.original)
+                    }
+                }
                 .tag(Router.Tab.apps)
 
             GoodPostView()
@@ -72,6 +80,25 @@ struct RootView: View {
                 Task { await TodoReminderScheduler.shared.refresh() }
             }
         }
+    }
+
+    private static let selectedAppsIcon = appsIcon(selected: true)
+    private static let unselectedAppsIcon = appsIcon(selected: false)
+
+    private static func appsIcon(selected: Bool) -> UIImage {
+        let colors: [UIColor] = selected ? [
+            UIColor(red: 0.15, green: 0.76, blue: 0.57, alpha: 1), .white,
+            UIColor(red: 0.97, green: 0.76, blue: 0.29, alpha: 1),
+            UIColor(red: 0.95, green: 0.45, blue: 0.46, alpha: 1)
+        ] : Array(repeating: .white, count: 4)
+        return UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { _ in
+            for index in 0..<4 {
+                colors[index].setFill()
+                let rect = CGRect(x: 2.5 + Double(index % 2) * 10.5,
+                                  y: 2.5 + Double(index / 2) * 10.5, width: 8.5, height: 8.5)
+                UIBezierPath(roundedRect: rect, cornerRadius: 1.8).fill()
+            }
+        }.withRenderingMode(.alwaysOriginal)
     }
 
     /// The bar's own colours, in Android's terms.
