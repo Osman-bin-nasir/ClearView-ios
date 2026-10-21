@@ -49,9 +49,6 @@ struct AppsHubView: View {
                                 } action: { showShortcut = true }
                             }
                         }
-                        RoundedRectangle(cornerRadius: 2).fill(Color.cvSurfaceContainerLow.opacity(0.65))
-                            .frame(height: max(90, min(200, geometry.size.height * 0.25)))
-                            .padding(.top, 6).accessibilityHidden(true)
                         Spacer(minLength: 24)
                     }.padding(.horizontal, 26).padding(.top, 26)
                         .frame(minHeight: geometry.size.height, alignment: .top)
