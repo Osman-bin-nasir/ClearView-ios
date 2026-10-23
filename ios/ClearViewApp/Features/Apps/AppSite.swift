@@ -10,7 +10,7 @@ enum AppDestination: String, Identifiable {
         case .home: return "Home"
         case .subscriptions: return "Subscriptions"
         case .shortVideos: return site.shortVideoName
-        case .explore: return "Search"
+        case .explore: return site == .snapchat ? "Discover" : "Search"
         case .account: return site == .youtube ? "You" : "Profile"
         }
     }
@@ -40,7 +40,12 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         case .web: return "Browser"
         }
     }
-    var usesAppShell: Bool { self == .youtube || self == .instagram }
+    /// YouTube, Instagram, Snapchat and Facebook are presented as apps with a native
+    /// header and bottom navigation. Google and custom websites keep the browser chrome.
+    var usesAppShell: Bool { self != .google && self != .web }
+
+    /// Apps whose header shows the brand mark and app name without a website address.
+    var usesBrandedHeader: Bool { self == .snapchat || self == .facebook }
 
     /// The site's short-form video surface, or an empty string when it has none.
     ///
@@ -71,7 +76,7 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .youtube: value = "https://m.youtube.com/"
         case .instagram: value = "https://www.instagram.com/"
-        case .snapchat: value = "https://www.snapchat.com/"
+        case .snapchat: value = "https://www.snapchat.com/discover"
         case .facebook: value = "https://m.facebook.com/"
         case .google, .web: value = "https://www.google.com/"
         }
@@ -85,11 +90,23 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .youtube: return [.home, .shortVideos, .subscriptions, .account]
         case .instagram: return [.home, .explore, .shortVideos, .account]
-        default: return [.home]
+        case .snapchat: return [.home, .shortVideos, .account]
+        case .facebook: return [.home, .shortVideos, .explore, .account]
+        case .google, .web: return [.home]
         }
     }
 
     func destinationURL(_ destination: AppDestination) -> URL {
+        // Snapchat's home is Discover, while Spotlight lives at the site root's
+        // sibling path; its Profile tab is the account site.
+        if self == .snapchat {
+            switch destination {
+            case .home: return home
+            case .shortVideos: return URL(string: "https://www.snapchat.com/spotlight")!
+            case .account: return URL(string: "https://accounts.snapchat.com/accounts/login")!
+            default: return home
+            }
+        }
         let path: String
         switch (self, destination) {
         case (_, .home): return home
@@ -99,6 +116,9 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         case (.instagram, .shortVideos): path = "reels/"
         case (.instagram, .explore): path = "explore/"
         case (.instagram, .account): path = "accounts/login/"
+        case (.facebook, .shortVideos): path = "reels/"
+        case (.facebook, .explore): path = "search/top/"
+        case (.facebook, .account): path = "me"
         default: return home
         }
         return home.appendingPathComponent(path)

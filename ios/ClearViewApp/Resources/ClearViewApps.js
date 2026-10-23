@@ -8,9 +8,11 @@
   const isFacebook = host === 'facebook.com' || host.endsWith('.facebook.com');
   const isGoogle = /^(?:www\.|m\.)?google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host);
   const isService = isYouTube || isInstagram || isSnapchat || isFacebook;
-  // A native shell is YouTube/Instagram's own bottom navigation. Snapchat and
-  // Facebook keep their website chrome and only gain Shorts blocking.
-  const isAppShell = isYouTube || isInstagram;
+  // All four are presented with ClearView's native header and bottom navigation.
+  // Only YouTube and Instagram opt into ClearView's dark palette; Snapchat and
+  // Facebook keep their own colours.
+  const isAppShell = isService;
+  const usesDarkPalette = isYouTube || isInstagram;
   const domain = isYouTube ? 'youtube.com' : isInstagram ? 'instagram.com'
     : isSnapchat ? 'snapchat.com' : isFacebook ? 'facebook.com' : host;
   if (location.protocol !== 'https:') return;
@@ -30,7 +32,7 @@
   const tracked = new Map();
   const elementIDs = new WeakMap();
   const home = isYouTube ? 'https://m.youtube.com/' : isInstagram ? 'https://www.instagram.com/'
-    : isSnapchat ? 'https://www.snapchat.com/' : isFacebook ? 'https://m.facebook.com/' : 'https://www.google.com/';
+    : isSnapchat ? 'https://www.snapchat.com/discover' : isFacebook ? 'https://m.facebook.com/' : 'https://www.google.com/';
   const cardSelector = isYouTube
     ? 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-video-renderer,ytm-compact-video-renderer,ytm-grid-video-renderer,ytm-reel-item-renderer,ytm-shorts-lockup-view-model,ytm-shorts-lockup-view-model-v2,yt-shorts-lockup-view-model,ytd-rich-item-renderer,ytd-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer,ytm-reel-video-renderer,ytd-reel-video-renderer'
     : '[role="article"],article,[role="listitem"]';
@@ -93,6 +95,7 @@
     html[data-cv-block-ads="true"] .video-ads,
     html[data-cv-block-ads="true"] .ytp-ad-overlay-container { display:none!important; }
     [data-cv-review="pending"] { visibility:hidden!important; }
+    [data-cv-app-prompt="true"] { display:none!important; }
     html[data-cv-app-shell="true"] [data-cv-web-chrome="true"],
     html[data-cv-app-shell="true"] ytm-pivot-bar-renderer,
     html[data-cv-app-shell="true"] ytm-pivot-bar-view-model,
@@ -128,7 +131,7 @@
     html[data-cv-hide-shorts="true"] ytm-reel-item-renderer,
     html[data-cv-hide-shorts="true"] ytd-reel-item-renderer { display:none!important; }
     ytm-app-promo-renderer,ytm-open-app-banner-renderer,ytm-mobile-app-promo-renderer { display:none!important; }
-    a[href*="apps.apple.com/app/"],a[href*="play.google.com/store/apps/"] { display:none!important; }
+    a[href*="apps.apple.com"],a[href*="itunes.apple.com"],a[href*="play.google.com/store/apps"] { display:none!important; }
     #clearview-route-cover,#clearview-short-route-cover {
       position:fixed;inset:0;z-index:2147483647;background:#0f1514;color:#dde4e3;
       display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -144,9 +147,7 @@
     if (!document.documentElement) return;
     if (!style.isConnected) (document.head || document.documentElement).append(style);
     document.documentElement.dataset.cvDark = String(config.dark);
-    // Only the two native shells opt into ClearView's dark palette; Snapchat and
-    // Facebook keep their own theme.
-    document.documentElement.dataset.cvService = String(isAppShell);
+    document.documentElement.dataset.cvService = String(usesDarkPalette);
     document.documentElement.dataset.cvHideShorts = String(Boolean(shortSetting()));
     document.documentElement.dataset.cvAppShell = String(Boolean(config.appShell) && isAppShell && !isAuthenticationPage());
     document.documentElement.dataset.cvRemoveBlocked = String(config.removeBlockedCards !== false);
@@ -187,13 +188,75 @@
     if (!isAppShell || !config.appShell) return;
     const selector = isYouTube
       ? 'ytm-pivot-bar-renderer,ytm-pivot-bar-view-model,ytm-mobile-topbar-renderer,ytm-mobile-topbar-renderer-v2,ytd-masthead,#masthead-container'
-      : 'nav,[role="navigation"],[role="banner"]';
+      : isSnapchat
+        ? 'header,nav,[role="navigation"],[role="banner"],[data-testid="mobile-nav-top"],[class*="MobileNavigation_mobileNavContainer"],[class*="MobileHeader_headerWrapper"],[class*="MobileGhostIconCTABanner"]'
+        : isFacebook
+          ? 'header,nav,[role="navigation"],[role="banner"],footer,[role="contentinfo"],[data-testid*="banner"],[data-testid*="upsell"]'
+          : 'nav,[role="navigation"],[role="banner"],footer,[role="contentinfo"]';
     document.querySelectorAll(selector).forEach(node => {
       if (!node.closest('article,form,[role="dialog"]')) node.setAttribute('data-cv-web-chrome', 'true');
     });
     if (!isYouTube) document.querySelectorAll('header').forEach(node => {
       if (!node.closest('main,article,form,[role="dialog"]')) node.setAttribute('data-cv-web-chrome', 'true');
     });
+  }
+
+  /// Snapchat and Facebook put "open the app" / "download the app" prompts in the
+  /// middle of their web pages. Those are website chrome, not content: mark them
+  /// so the app-shell CSS removes them, including the text-only banners that have
+  /// no stable class name.
+  function hideAppPrompts() {
+    if (!isSnapchat && !isFacebook) return;
+    if (!document.body) return;
+    document.querySelectorAll('[data-cv-app-prompt="true"]').forEach(node => node.removeAttribute('data-cv-app-prompt'));
+    let selector = 'a[href*="apps.apple.com"],a[href*="itunes.apple.com"],a[href*="play.google.com/store/apps"],a[href^="snapchat://"],a[href^="fb://"]';
+    if (isSnapchat) {
+      selector += ',a[href*="click.snapchat.com"],a[href*="link.snapchat.com"],a[href*="snapchat.com/download"],'
+        + '[class*="MobileGhostIconCTABanner"],[class*="MobileHeader_headerWrapper"],[class*="MobileHeader_mobileInstallButton"],'
+        + '[class*="HomepageContent_mobileDownloadSnapchat"],[class*="HomepageContent_landingScreen"],'
+        + '[class*="HomepageContent_heroContent"],[data-testid="ConsumerNav_DownloadButton"]';
+    }
+    document.querySelectorAll(selector).forEach(node => node.setAttribute('data-cv-app-prompt', 'true'));
+    const patterns = isSnapchat
+      ? [/^open snapchat$/i, /^install$/i, /^download$/i, /^download snapchat$/i,
+         /^download to try the most popular/i, /^open in app$/i,
+         /^snapchat is better on the app$/i, /^snapchat app$/i, /^open in snapchat$/i,
+         /^browser continue$/i]
+      : [/^get facebook for ios and browse faster\.?$/i, /^open in app$/i];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const value = (node.textContent || '').trim();
+      if (!value || value.length > 140 || !patterns.some(pattern => pattern.test(value))) continue;
+      let element = node.parentElement;
+      for (let depth = 0; element && depth < 5; depth++, element = element.parentElement) {
+        const tag = element.tagName.toLowerCase();
+        if (tag === 'a' || tag === 'button' || element.getAttribute('role') === 'button' || tag === 'header') {
+          element.setAttribute('data-cv-app-prompt', 'true');
+          break;
+        }
+        if (depth >= 2 && element.textContent.trim().length <= 200) {
+          element.setAttribute('data-cv-app-prompt', 'true');
+          break;
+        }
+      }
+    }
+    if (isFacebook) {
+      // The login page's footer is plain links with no landmark role. Remove the
+      // "Meta / About Help More" strip so the app navigation is the last bar.
+      document.querySelectorAll('div,section,footer').forEach(element => {
+        const value = (element.textContent || '').replace(/\s+/g, ' ').trim();
+        if (value.length <= 40 && value.endsWith('About Help More') && !element.querySelector('input,form')) {
+          element.setAttribute('data-cv-app-prompt', 'true');
+        }
+        const labels = Array.from(element.children)
+          .map(child => (child.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase())
+          .filter(Boolean);
+        if (labels.filter(label => ['about', 'help', 'more'].includes(label)).length >= 2) {
+          element.setAttribute('data-cv-app-prompt', 'true');
+        }
+      });
+    }
   }
 
   function shortControl(element) {
@@ -333,6 +396,7 @@
     mount();
     route();
     markAppChrome();
+    hideAppPrompts();
     hideShortLinks();
     filterGoogleCategories();
     skipVideoAds();
@@ -464,6 +528,7 @@
       mount();
       route();
       markAppChrome();
+      hideAppPrompts();
       hideShortLinks();
       filterGoogleCategories();
       skipVideoAds();

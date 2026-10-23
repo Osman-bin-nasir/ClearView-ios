@@ -102,8 +102,9 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         let path = currentURL?.path.lowercased() ?? "/"
         if let url = currentURL, site.isShortVideo(url) { return .shortVideos }
         if path.hasPrefix("/feed/subscriptions") { return .subscriptions }
-        if path.hasPrefix("/explore") || path == "/results" { return .explore }
+        if path.hasPrefix("/explore") || path == "/results" || path.hasPrefix("/search") { return .explore }
         if path.hasPrefix("/feed/you") || path.hasPrefix("/feed/library") || path.hasPrefix("/accounts") { return .account }
+        if site == .facebook && (path == "/me" || path.hasPrefix("/profile")) { return .account }
         if site == .instagram && path != "/" && !["/p/", "/reel/", "/direct/"].contains(where: path.hasPrefix) { return .account }
         return .home
     }

@@ -119,9 +119,13 @@ struct AppBrowserView: View {
             }.accessibilityLabel(showsBackButton ? "Back" : "Back to Apps")
             appTitle.frame(maxWidth: .infinity, alignment: .leading)
             if session.showsAppNavigation {
-                Button { showSearch = true } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 21)).frame(width: 40, height: 44)
-                }.accessibilityLabel(session.site.usesAppShell ? "Search \(session.site.name)" : "Search the web")
+                // Snapchat's site has no query-based search route; the native
+                // Discover tab is its discovery surface instead.
+                if session.site != .snapchat {
+                    Button { showSearch = true } label: {
+                        Image(systemName: "magnifyingglass").font(.system(size: 21)).frame(width: 40, height: 44)
+                    }.accessibilityLabel(session.site.usesAppShell ? "Search \(session.site.name)" : "Search the web")
+                }
                 if session.site == .instagram {
                     Button { session.openInbox() } label: {
                         Image(systemName: "paperplane").font(.system(size: 20)).frame(width: 40, height: 44)
@@ -150,8 +154,13 @@ struct AppBrowserView: View {
     }
 
     private var showsBackButton: Bool {
+        guard session.canGoBack else { return false }
+        // YouTube and Instagram use their native tabs for top-level movement. The
+        // branded web apps keep ordinary page history, so Back stays available
+        // wherever they have somewhere to go back to.
+        if session.site.usesBrandedHeader { return true }
         let path = session.currentURL?.path ?? "/"
-        return session.canGoBack && (!session.showsAppNavigation || path == "/watch" || path == "/results" || path.hasPrefix("/p/"))
+        return !session.showsAppNavigation || path == "/watch" || path == "/results" || path.hasPrefix("/p/")
     }
 
     private var intentHome: some View {
@@ -181,15 +190,26 @@ struct AppBrowserView: View {
     }
 
     private var appTitle: some View {
-        HStack(spacing: 5) {
-            if session.site == .youtube && session.showsAppNavigation {
-                Image(systemName: "play.rectangle.fill").font(.system(size: 25)).foregroundStyle(.red)
+        HStack(spacing: 7) {
+            if session.showsAppNavigation {
+                switch session.site {
+                case .youtube:
+                    Image(systemName: "play.rectangle.fill").font(.system(size: 25)).foregroundStyle(.red)
+                case .snapchat, .facebook:
+                    AppBrandMark(site: session.site, size: 25)
+                case .google, .instagram, .web:
+                    EmptyView()
+                }
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.showsAppNavigation ? (session.site.usesAppShell ? session.site.name : "ClearView") : "Sign in")
                     .font(.system(size: 21, weight: .bold, design: .rounded)).tracking(-0.7)
-                if !session.showsAppNavigation || !session.site.usesAppShell {
+                    .accessibilityIdentifier("browser.title")
+                // A branded app never shows its website address. Google and custom
+                // websites keep the host so the person knows where they are.
+                if !session.site.usesBrandedHeader && (!session.showsAppNavigation || !session.site.usesAppShell) {
                     Text(session.currentURL?.host ?? "Search the web").font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
+                        .accessibilityIdentifier("browser.host")
                 }
             }
         }

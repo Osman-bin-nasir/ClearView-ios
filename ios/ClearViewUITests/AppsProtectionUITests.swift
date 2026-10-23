@@ -63,16 +63,28 @@ final class AppsProtectionUITests: XCTestCase {
         // The two new launcher entries open their real sites in the protected
         // browser. The native header is enough to prove the session is up; the
         // sites' own content depends on the network and sign-in state.
-        openLauncherApp(app, name: "Open Facebook", capture: "Facebook app", wait: 3)
-        openLauncherApp(app, name: "Open Snapchat", capture: "Snapchat app", wait: 5)
+        openLauncherApp(app, name: "Open Facebook", capture: "Facebook app", wait: 3, expectedTitle: "Facebook")
+        openLauncherApp(app, name: "Open Snapchat", capture: "Snapchat app", wait: 5, expectedTitle: "Snapchat")
     }
 
 
     // MARK: - Helpers
 
-    private func openLauncherApp(_ app: XCUIApplication, name: String, capture title: String, wait seconds: TimeInterval) {
+    private func openLauncherApp(_ app: XCUIApplication, name: String, capture title: String,
+                                 wait seconds: TimeInterval, expectedTitle: String) {
         app.buttons[name].tap()
         XCTAssertTrue(app.buttons["apps.filters"].waitForExistence(timeout: 30), "\(name) should open the protected browser")
+
+        // It should look like an app: the branded title, no website address, and
+        // the native tabs instead of the browser toolbar.
+        let appTitle = app.staticTexts["browser.title"]
+        XCTAssertTrue(appTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(appTitle.label, expectedTitle)
+        XCTAssertFalse(app.staticTexts["browser.host"].exists, "the website address must not be shown")
+        XCTAssertTrue(app.buttons["apps.navigation.home"].exists, "the native Home tab should be shown")
+        XCTAssertFalse(app.buttons["apps.navigation.shortVideos"].exists,
+                       "the blocked short-video tab should be gone")
+
         Thread.sleep(forTimeInterval: seconds)
         capture(title, app: app)
         app.buttons["App menu"].tap()

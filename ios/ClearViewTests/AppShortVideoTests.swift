@@ -47,6 +47,37 @@ final class AppShortVideoTests: XCTestCase {
         XCTAssertFalse(AppSite.web.supportsShortVideoBlocking)
     }
 
+    /// All four apps use the native shell; only Snapchat and Facebook replace the
+    /// website header with a brand mark and app name.
+    func testTheShortVideoAppsUseTheNativeShell() {
+        for site in [AppSite.youtube, .instagram, .snapchat, .facebook] {
+            XCTAssertTrue(site.usesAppShell, "\(site.name) should use the native shell")
+        }
+        XCTAssertFalse(AppSite.google.usesAppShell)
+        XCTAssertFalse(AppSite.web.usesAppShell)
+
+        XCTAssertTrue(AppSite.snapchat.usesBrandedHeader)
+        XCTAssertTrue(AppSite.facebook.usesBrandedHeader)
+        XCTAssertFalse(AppSite.youtube.usesBrandedHeader)
+        XCTAssertFalse(AppSite.instagram.usesBrandedHeader)
+    }
+
+    /// Each branded app gets native tabs that point at its real routes, so the
+    /// browser chrome is never shown for them.
+    func testSnapchatAndFacebookNativeTabs() {
+        XCTAssertEqual(AppSite.snapchat.destinations, [.home, .shortVideos, .account])
+        XCTAssertEqual(AppSite.facebook.destinations, [.home, .shortVideos, .explore, .account])
+
+        XCTAssertEqual(AppSite.snapchat.home.absoluteString, "https://www.snapchat.com/discover")
+        XCTAssertEqual(AppSite.snapchat.destinationURL(.home).absoluteString, "https://www.snapchat.com/discover")
+        XCTAssertEqual(AppSite.snapchat.destinationURL(.shortVideos).absoluteString, "https://www.snapchat.com/spotlight")
+        XCTAssertEqual(AppSite.snapchat.destinationURL(.account).absoluteString, "https://accounts.snapchat.com/accounts/login")
+        XCTAssertEqual(AppSite.facebook.destinationURL(.home).absoluteString, "https://m.facebook.com/")
+        XCTAssertEqual(AppSite.facebook.destinationURL(.shortVideos).absoluteString, "https://m.facebook.com/reels/")
+        XCTAssertEqual(AppSite.facebook.destinationURL(.explore).absoluteString, "https://m.facebook.com/search/top/")
+        XCTAssertEqual(AppSite.facebook.destinationURL(.account).absoluteString, "https://m.facebook.com/me")
+    }
+
     // MARK: - Routes
 
     /// YouTube Shorts and Instagram Reels keep their original behaviour.
