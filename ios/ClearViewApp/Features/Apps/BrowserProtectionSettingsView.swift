@@ -37,6 +37,10 @@ struct BrowserProtectionSettingsView: View {
                     }
                     setting("Hide Instagram Reels", detail: "Removes Reels entry points and keeps Reels links from opening.", symbol: "film",
                             value: shortBinding(.instagram), id: "browser.hide-reels")
+                    setting("Hide Snapchat Spotlight", detail: "Removes Spotlight entry points and keeps Spotlight links from opening.", symbol: "sparkles",
+                            value: shortBinding(.snapchat), id: "browser.hide-spotlight")
+                    setting("Hide Facebook Reels", detail: "Removes Reels entry points and keeps Reels links from opening.", symbol: "play.square.stack",
+                            value: shortBinding(.facebook), id: "browser.hide-facebook-reels")
                     setting("Hide Google search categories", detail: "Keeps only the All tab; Images, Videos, News and the rest are hidden.", symbol: "line.3.horizontal.decrease",
                             value: browserBinding(\.hideGoogleCategories), id: "browser.hide-google-categories")
                     setting("Remove blocked videos from feed", detail: "Blocked cards leave the feed instead of only being covered.", symbol: "rectangle.stack.badge.minus",

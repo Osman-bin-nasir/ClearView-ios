@@ -30,7 +30,7 @@ struct AppsHubView: View {
                                 .padding(.horizontal, 16).padding(.vertical, 8)
                                 .background(Color.cvSurfaceContainerLow, in: Capsule())
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), alignment: .leading, spacing: 24) {
-                                ForEach([AppSite.google, .youtube, .instagram]) { site in
+                                ForEach([AppSite.google, .youtube, .instagram, .snapchat, .facebook]) { site in
                                     shortcut(name: site.name) { AppBrandMark(site: site, size: 56) } action: { selectedApp = site }
                                         .accessibilityLabel("Open \(site.name)")
                                 }
@@ -103,7 +103,7 @@ struct AppBrandMark: View {
     var size: CGFloat = 40
     var body: some View {
         ZStack {
-            Circle().fill(.white)
+            Circle().fill(background)
             switch site {
             case .google, .web:
                 Text("G").font(.system(size: size * 0.59, weight: .bold, design: .rounded))
@@ -113,8 +113,65 @@ struct AppBrandMark: View {
             case .instagram:
                 Image(systemName: "camera").font(.system(size: size * 0.51, weight: .medium))
                     .foregroundStyle(LinearGradient(colors: [.purple, .pink, .orange], startPoint: .topTrailing, endPoint: .bottomLeading))
+            case .snapchat:
+                SnapchatGhostMark(eyeColor: background)
+                    .frame(width: size * 0.5, height: size * 0.56)
+            case .facebook:
+                Text("f").font(.system(size: size * 0.68, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white).offset(y: -size * 0.02)
             }
         }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+
+    private var background: Color {
+        switch site {
+        case .snapchat: return Color(red: 1, green: 0.99, blue: 0)
+        case .facebook: return Color(red: 0.094, green: 0.467, blue: 0.949)
+        default: return .white
+        }
+    }
+}
+
+/// Snapchat's ghost, drawn rather than borrowed: SF Symbols has no ghost glyph, and the
+/// launcher gives every app its own brand mark instead of a generic icon.
+private struct SnapchatGhostMark: View {
+    let eyeColor: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            ZStack {
+                Path { path in
+                    path.move(to: CGPoint(x: width * 0.5, y: 0))
+                    path.addCurve(
+                        to: CGPoint(x: width, y: height * 0.44),
+                        control1: CGPoint(x: width * 0.78, y: 0),
+                        control2: CGPoint(x: width, y: height * 0.18)
+                    )
+                    path.addLine(to: CGPoint(x: width, y: height * 0.78))
+                    path.addQuadCurve(to: CGPoint(x: width * 0.72, y: height * 0.78),
+                                      control: CGPoint(x: width * 0.86, y: height))
+                    path.addQuadCurve(to: CGPoint(x: width * 0.5, y: height * 0.78),
+                                      control: CGPoint(x: width * 0.61, y: height))
+                    path.addQuadCurve(to: CGPoint(x: width * 0.28, y: height * 0.78),
+                                      control: CGPoint(x: width * 0.39, y: height))
+                    path.addQuadCurve(to: CGPoint(x: 0, y: height * 0.78),
+                                      control: CGPoint(x: width * 0.14, y: height))
+                    path.addLine(to: CGPoint(x: 0, y: height * 0.44))
+                    path.addCurve(
+                        to: CGPoint(x: width * 0.5, y: 0),
+                        control1: CGPoint(x: 0, y: height * 0.18),
+                        control2: CGPoint(x: width * 0.22, y: 0)
+                    )
+                    path.closeSubpath()
+                }.fill(.black)
+                HStack(spacing: width * 0.16) {
+                    Capsule().frame(width: width * 0.12, height: height * 0.16)
+                    Capsule().frame(width: width * 0.12, height: height * 0.16)
+                }.foregroundStyle(eyeColor).offset(y: height * 0.34)
+            }
+        }
     }
 }
 

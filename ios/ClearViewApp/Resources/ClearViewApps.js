@@ -4,11 +4,23 @@
   const host = location.hostname;
   const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com');
   const isInstagram = host === 'instagram.com' || host.endsWith('.instagram.com');
+  const isSnapchat = host === 'snapchat.com' || host.endsWith('.snapchat.com');
+  const isFacebook = host === 'facebook.com' || host.endsWith('.facebook.com');
   const isGoogle = /^(?:www\.|m\.)?google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host);
-  const isService = isYouTube || isInstagram;
-  const domain = isYouTube ? 'youtube.com' : isInstagram ? 'instagram.com' : host;
+  const isService = isYouTube || isInstagram || isSnapchat || isFacebook;
+  // A native shell is YouTube/Instagram's own bottom navigation. Snapchat and
+  // Facebook keep their website chrome and only gain Shorts blocking.
+  const isAppShell = isYouTube || isInstagram;
+  const domain = isYouTube ? 'youtube.com' : isInstagram ? 'instagram.com'
+    : isSnapchat ? 'snapchat.com' : isFacebook ? 'facebook.com' : host;
   if (location.protocol !== 'https:') return;
   let config = clearViewInitial;
+  // Each app names its vertical feed differently and has its own switch.
+  const shortSetting = () => isYouTube ? config.blockShorts
+    : isInstagram ? config.blockReels
+    : isSnapchat ? config.blockSpotlight
+    : isFacebook ? config.blockFacebookReels : false;
+  const shortName = () => isYouTube ? 'Shorts' : isSnapchat ? 'Spotlight' : 'Reels';
   let running = false;
   let lastURL = '';
   let timer;
@@ -17,10 +29,11 @@
   const documentID = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const tracked = new Map();
   const elementIDs = new WeakMap();
-  const home = isYouTube ? 'https://m.youtube.com/' : isInstagram ? 'https://www.instagram.com/' : 'https://www.google.com/';
+  const home = isYouTube ? 'https://m.youtube.com/' : isInstagram ? 'https://www.instagram.com/'
+    : isSnapchat ? 'https://www.snapchat.com/' : isFacebook ? 'https://m.facebook.com/' : 'https://www.google.com/';
   const cardSelector = isYouTube
     ? 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-video-renderer,ytm-compact-video-renderer,ytm-grid-video-renderer,ytm-reel-item-renderer,ytm-shorts-lockup-view-model,ytm-shorts-lockup-view-model-v2,yt-shorts-lockup-view-model,ytd-rich-item-renderer,ytd-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer,ytm-reel-video-renderer,ytd-reel-video-renderer'
-    : 'article,[role="listitem"]';
+    : '[role="article"],article,[role="listitem"]';
   const send = payload => {
     try { window.webkit.messageHandlers.appsFilter.postMessage(payload); } catch (_) { /* Navigation can detach a frame. */ }
   };
@@ -28,7 +41,12 @@
     try {
       const url = new URL(value, location.href);
       if (!isService || (url.hostname !== domain && !url.hostname.endsWith('.' + domain))) return false;
-      return isYouTube ? /^\/shorts(?:\/|$)/i.test(url.pathname) : /^\/reels?(?:\/|$)/i.test(url.pathname);
+      const path = url.pathname.toLowerCase();
+      if (isYouTube) return /^\/shorts(?:\/|$)/.test(path);
+      if (isInstagram) return /^\/reels?(?:\/|$)/.test(path);
+      if (isSnapchat) return /^(?:\/web)?\/spotlight(?:\/|$)/.test(path);
+      // Facebook's share sheet produces /share/reel/<id> and /share/r/<id> links.
+      return /^\/(?:reels?|share\/reel|share\/r)(?:\/|$)/.test(path);
     } catch (_) { return false; }
   };
   const isAuthenticationPage = () => /^\/(accounts|signin|login|challenge|consent|checkpoint)(?:\/|$)/i.test(location.pathname);
@@ -97,7 +115,11 @@
     html[data-cv-hide-shorts="true"] ytm-pivot-bar-item-renderer:has([aria-label="Shorts"]),
     html[data-cv-hide-shorts="true"] a[href^="/shorts"],
     html[data-cv-hide-shorts="true"] a[href^="/reel/"],
-    html[data-cv-hide-shorts="true"] a[href^="/reels/"] { display:none!important; }
+    html[data-cv-hide-shorts="true"] a[href^="/reels/"],
+    html[data-cv-hide-shorts="true"] a[href^="/spotlight"],
+    html[data-cv-hide-shorts="true"] a[href*="/spotlight"],
+    html[data-cv-hide-shorts="true"] a[href^="/share/reel/"],
+    html[data-cv-hide-shorts="true"] a[href^="/share/r/"] { display:none!important; }
     html[data-cv-hide-shorts="true"] ytm-reel-shelf-renderer,
     html[data-cv-hide-shorts="true"] ytd-reel-shelf-renderer,
     html[data-cv-hide-shorts="true"] ytm-shorts-lockup-view-model,
@@ -122,9 +144,11 @@
     if (!document.documentElement) return;
     if (!style.isConnected) (document.head || document.documentElement).append(style);
     document.documentElement.dataset.cvDark = String(config.dark);
-    document.documentElement.dataset.cvService = String(isService);
-    document.documentElement.dataset.cvHideShorts = String(isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false);
-    document.documentElement.dataset.cvAppShell = String(Boolean(config.appShell) && isService && !isAuthenticationPage());
+    // Only the two native shells opt into ClearView's dark palette; Snapchat and
+    // Facebook keep their own theme.
+    document.documentElement.dataset.cvService = String(isAppShell);
+    document.documentElement.dataset.cvHideShorts = String(Boolean(shortSetting()));
+    document.documentElement.dataset.cvAppShell = String(Boolean(config.appShell) && isAppShell && !isAuthenticationPage());
     document.documentElement.dataset.cvRemoveBlocked = String(config.removeBlockedCards !== false);
     document.documentElement.dataset.cvHideGoogleCategories = String(isGoogle && config.hideGoogleCategories);
     document.documentElement.dataset.cvBlockAds = String(isYouTube && config.blockAds);
@@ -138,7 +162,7 @@
       send({kind:'route'});
       tracked.forEach(value => { value.fingerprint = ''; });
     }
-    const blocked = (isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false) && shortPath(location.href);
+    const blocked = Boolean(shortSetting()) && shortPath(location.href);
     let cover = document.getElementById('clearview-short-route-cover');
     if (blocked) {
       pause(document);
@@ -147,7 +171,7 @@
         cover.id = 'clearview-short-route-cover';
         cover.setAttribute('role', 'status');
         const heading = document.createElement('h2');
-        heading.textContent = (isYouTube ? 'Shorts' : 'Reels') + ' are hidden';
+        heading.textContent = shortName() === 'Spotlight' ? 'Spotlight is hidden' : shortName() + ' are hidden';
         const detail = document.createElement('p');
         detail.textContent = 'Your setting keeps short videos out of this app. You can change it with the shield button.';
         const link = document.createElement('a');
@@ -160,7 +184,7 @@
   }
 
   function markAppChrome() {
-    if (!isService) return;
+    if (!isAppShell || !config.appShell) return;
     const selector = isYouTube
       ? 'ytm-pivot-bar-renderer,ytm-pivot-bar-view-model,ytm-mobile-topbar-renderer,ytm-mobile-topbar-renderer-v2,ytd-masthead,#masthead-container'
       : 'nav,[role="navigation"],[role="banner"]';
@@ -176,10 +200,10 @@
     const href = element.getAttribute('href') || element.getAttribute('data-href');
     if (href && shortPath(href)) return true;
     const label = element.getAttribute('aria-label') || element.getAttribute('title') || '';
-    if (/^(?:shorts|reels)(?:\s|$)/i.test(label.trim())) return true;
+    if (/^(?:shorts|reels|spotlight)(?:\s|$)/i.test(label.trim())) return true;
     const tab = element.getAttribute('tab-identifier') || element.getAttribute('data-tab-identifier') || '';
-    if (/(?:shorts|reels)/i.test(tab)) return true;
-    return /^(?:shorts|reels)$/i.test((element.textContent || '').trim());
+    if (/(?:shorts|reels|spotlight)/i.test(tab)) return true;
+    return /^(?:shorts|reels|spotlight)$/i.test((element.textContent || '').trim());
   }
 
   function hideShortLinks() {
@@ -188,7 +212,7 @@
     // contain buttons and Instagram also uses role=button controls.
     document.querySelectorAll('[data-cv-short-nav]').forEach(node => node.removeAttribute('data-cv-short-nav'));
     document.querySelectorAll('[data-cv-short-shelf]').forEach(node => node.removeAttribute('data-cv-short-shelf'));
-    const selector = 'a[href],button[aria-label],button[title],[role="button"][aria-label],[role="tab"],ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model,[tab-identifier],[data-tab-identifier]';
+    const selector = 'a[href],button[aria-label],button[title],[role="button"][aria-label],[role="link"],[role="tab"],ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model,[tab-identifier],[data-tab-identifier]';
     document.querySelectorAll(selector).forEach(element => {
       if (!shortControl(element)) return;
       const item = element.closest('ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model,[role="tab"],[role="menuitem"]');
@@ -264,18 +288,29 @@
   function describe(element, detail = false) {
     const links = Array.from(element.querySelectorAll('a[href]'));
     if (element.matches('a[href]')) links.unshift(element);
-    const link = links.find(anchor => isYouTube
-      ? /\/(watch|shorts|live)(?:[/?]|$)/.test(anchor.getAttribute('href') || '')
-      : isInstagram ? /\/(p|reels?)\//.test(anchor.getAttribute('href') || '') : true);
-    const creatorLink = links.find(anchor => isYouTube
-      ? /\/(?:@|channel\/|c\/)/.test(anchor.getAttribute('href') || '')
-      : /^\/[a-zA-Z0-9_.]+\/?$/.test(anchor.getAttribute('href') || ''));
+    const link = links.find(anchor => {
+      const href = anchor.getAttribute('href') || '';
+      if (isYouTube) return /\/(watch|shorts|live)(?:[/?]|$)/.test(href);
+      if (isInstagram) return /\/(p|reels?)\//.test(href);
+      if (isSnapchat) return /^\/spotlight\//.test(href) || /^\/@/.test(href);
+      if (isFacebook) return /\/(?:reel|reels|videos?|watch|stories?)\//.test(href);
+      return true;
+    });
+    const creatorLink = links.find(anchor => {
+      const href = anchor.getAttribute('href') || '';
+      if (isYouTube) return /\/(?:@|channel\/|c\/)/.test(href);
+      if (isInstagram) return /^\/[a-zA-Z0-9_.]+\/?$/.test(href);
+      if (isSnapchat) return /^\/@[a-zA-Z0-9_.-]+\/?$/.test(href);
+      if (isFacebook) return /^\/[a-zA-Z0-9.]+\/?$/.test(href)
+        && !/^\/(?:reel|reels|watch|share|stories|login|signup)\/?$/i.test(href);
+      return true;
+    });
     const href = detail ? location.href : link?.href || '';
     const title = detail && isYouTube
       ? text(document.querySelector('ytm-slim-video-metadata-renderer,ytm-watch-metadata,ytm-video-description-header-renderer,#above-the-fold'), 4500) || document.title
       : text(element);
     return {text:title, creator:creatorLink?.textContent?.trim().slice(0, 200) || '', url:href,
-      short:shortPath(href) || /reel|shorts/.test(element.tagName.toLowerCase()), detail};
+      short:shortPath(href) || /reel|shorts|spotlight/.test(element.tagName.toLowerCase()), detail};
   }
 
   function queue(element, description, items) {
@@ -465,7 +500,7 @@
   document.addEventListener('click', event => {
     const anchor = event.target.closest?.('a[href]');
     const control = event.target.closest?.('button,[role="button"],[role="tab"],ytm-pivot-bar-item-renderer,ytm-pivot-bar-item-view-model');
-    const blocksShorts = isYouTube ? config.blockShorts : isInstagram ? config.blockReels : false;
+    const blocksShorts = Boolean(shortSetting());
     if (blocksShorts && ((anchor && shortPath(anchor.href)) || (control && shortControl(control)))) {
       event.preventDefault(); event.stopImmediatePropagation();
     }
@@ -481,7 +516,7 @@
     send({kind:'whitespaceTap', url:location.href});
   }, true);
   document.addEventListener('play', event => {
-    if (!running || ((isYouTube ? config.blockShorts : config.blockReels) && shortPath(location.href)) || detailCover?.isConnected
+    if (!running || (shortSetting() && shortPath(location.href)) || detailCover?.isConnected
         || event.target.closest?.('[data-cv-hidden="true"],[data-cv-review="pending"]')) event.target.pause?.();
   }, true);
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(document); });

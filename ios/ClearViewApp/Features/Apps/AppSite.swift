@@ -27,7 +27,7 @@ enum AppDestination: String, Identifiable {
 }
 
 enum AppSite: String, CaseIterable, Codable, Identifiable {
-    case google, youtube, instagram, web
+    case google, youtube, instagram, snapchat, facebook, web
 
     var id: String { rawValue }
     var name: String {
@@ -35,24 +35,58 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         case .google: return "Google"
         case .youtube: return "YouTube"
         case .instagram: return "Instagram"
+        case .snapchat: return "Snapchat"
+        case .facebook: return "Facebook"
         case .web: return "Browser"
         }
     }
     var usesAppShell: Bool { self == .youtube || self == .instagram }
-    var shortVideoName: String { self == .youtube ? "Shorts" : "Reels" }
+
+    /// The site's short-form video surface, or an empty string when it has none.
+    ///
+    /// Snapchat calls its vertical feed Spotlight; Facebook and Instagram both call
+    /// theirs Reels. Keeping the name beside the site is what lets one settings row,
+    /// one route cover and one URL check speak each app's language.
+    var shortVideoName: String {
+        switch self {
+        case .youtube: return "Shorts"
+        case .instagram, .facebook: return "Reels"
+        case .snapchat: return "Spotlight"
+        case .google, .web: return ""
+        }
+    }
+
+    /// Whether this site has a short-form surface ClearView can hide.
+    var supportsShortVideoBlocking: Bool { !shortVideoName.isEmpty }
+
     var subtitle: String {
-        self == .youtube ? "Your channels. Your kind of watching." : "Keep up with people, on your terms."
+        switch self {
+        case .youtube: return "Your channels. Your kind of watching."
+        case .instagram, .snapchat, .facebook: return "Keep up with people, on your terms."
+        case .google, .web: return "Search the web, with a little more intention."
+        }
     }
     var home: URL {
-        URL(string: self == .youtube ? "https://m.youtube.com/"
-            : self == .instagram ? "https://www.instagram.com/" : "https://www.google.com/")!
+        let value: String
+        switch self {
+        case .youtube: value = "https://m.youtube.com/"
+        case .instagram: value = "https://www.instagram.com/"
+        case .snapchat: value = "https://www.snapchat.com/"
+        case .facebook: value = "https://m.facebook.com/"
+        case .google, .web: value = "https://www.google.com/"
+        }
+        return URL(string: value)!
     }
     var search: URL {
         searchURL("")
     }
 
     var destinations: [AppDestination] {
-        self == .youtube ? [.home, .shortVideos, .subscriptions, .account] : self == .instagram ? [.home, .explore, .shortVideos, .account] : [.home]
+        switch self {
+        case .youtube: return [.home, .shortVideos, .subscriptions, .account]
+        case .instagram: return [.home, .explore, .shortVideos, .account]
+        default: return [.home]
+        }
     }
 
     func destinationURL(_ destination: AppDestination) -> URL {
@@ -71,9 +105,16 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
     }
 
     func searchURL(_ query: String) -> URL {
-        let path = self == .youtube ? "results" : self == .instagram ? "explore/search/keyword/" : "search"
+        let (path, parameter): (String, String)
+        switch self {
+        case .youtube: (path, parameter) = ("results", "search_query")
+        case .instagram: (path, parameter) = ("explore/search/keyword/", "q")
+        case .facebook: (path, parameter) = ("search/top/", "q")
+        case .snapchat: (path, parameter) = ("search", "q")
+        case .google, .web: (path, parameter) = ("search", "q")
+        }
         var parts = URLComponents(url: home.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        parts.queryItems = [URLQueryItem(name: self == .youtube ? "search_query" : "q", value: query)]
+        parts.queryItems = [URLQueryItem(name: parameter, value: query)]
         return parts.url!
     }
 
@@ -83,10 +124,21 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         return owns(url) && ["/accounts/", "/signin", "/login", "/challenge/", "/consent", "/checkpoint/"].contains(where: path.hasPrefix)
     }
 
+    /// The domain an app belongs to. Google and the shared browser deliberately have
+    /// none: they keep every HTTPS link inside their own session.
+    var domain: String? {
+        switch self {
+        case .youtube: return "youtube.com"
+        case .instagram: return "instagram.com"
+        case .snapchat: return "snapchat.com"
+        case .facebook: return "facebook.com"
+        case .google, .web: return nil
+        }
+    }
+
     func owns(_ url: URL) -> Bool {
         guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
-        if !usesAppShell { return true }
-        let domain = self == .youtube ? "youtube.com" : "instagram.com"
+        guard let domain else { return true }
         return host == domain || host.hasSuffix("." + domain) || (self == .youtube && host == "youtu.be")
     }
 
@@ -100,18 +152,47 @@ enum AppSite: String, CaseIterable, Codable, Identifiable {
         case .instagram:
             // Facebook Login may redirect through either mobile or desktop endpoints.
             return ["www.facebook.com", "m.facebook.com", "accountscenter.facebook.com"].contains(host)
+        case .snapchat:
+            // Snapchat for Web can hand sign-in to Google or Apple.
+            return ["accounts.google.com", "consent.google.com", "appleid.apple.com"].contains(host)
+        case .facebook:
+            return ["accounts.google.com", "consent.google.com"].contains(host)
         }
     }
 
+    /// Which app a host belongs to, for the short-video check. A browser session can be
+    /// pointed at any of the four, and the block that applies is the one for the host in
+    /// the address bar rather than the one the session was opened for.
+    static func shortVideoSite(for host: String?) -> AppSite? {
+        guard let host = host?.lowercased() else { return nil }
+        if host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtu.be" { return .youtube }
+        if host == "instagram.com" || host.hasSuffix(".instagram.com") { return .instagram }
+        if host == "snapchat.com" || host.hasSuffix(".snapchat.com") { return .snapchat }
+        if host == "facebook.com" || host.hasSuffix(".facebook.com") { return .facebook }
+        return nil
+    }
+
     func isShortVideo(_ url: URL) -> Bool {
-        guard let host = url.host else { return false }
-        let isYouTube = host == "youtube.com" || host.hasSuffix(".youtube.com")
-        let isInstagram = host == "instagram.com" || host.hasSuffix(".instagram.com")
-        guard isYouTube || isInstagram else { return false }
+        guard let host = url.host, AppSite.shortVideoSite(for: host) == self else { return false }
         let path = url.path.lowercased()
-        return isYouTube
-            ? path == "/shorts" || path.hasPrefix("/shorts/")
-            : ["/reel", "/reels"].contains(path) || path.hasPrefix("/reel/") || path.hasPrefix("/reels/")
+        switch self {
+        case .youtube:
+            return path == "/shorts" || path.hasPrefix("/shorts/")
+        case .instagram:
+            return ["/reel", "/reels"].contains(path) || path.hasPrefix("/reel/") || path.hasPrefix("/reels/")
+        case .snapchat:
+            // The public Spotlight page is /spotlight; Snapchat for Web keeps the
+            // same feed under /web/spotlight/.
+            return ["/spotlight", "/web/spotlight"].contains(path)
+                || path.hasPrefix("/spotlight/") || path.hasPrefix("/web/spotlight/")
+        case .facebook:
+            // Facebook uses /reel/<id> and /reels, and its Share sheet produces
+            // /share/reel/<id> and /share/r/<id> links that land on the same player.
+            return ["/reel", "/reels"].contains(path) || path.hasPrefix("/reel/") || path.hasPrefix("/reels/")
+                || path.hasPrefix("/share/reel/") || path.hasPrefix("/share/r/")
+        case .google, .web:
+            return false
+        }
     }
 
     /// Website deep links stay in the embedded app instead of launching the installed app.
@@ -180,9 +261,8 @@ final class AppsLibrary {
     func keywords(for site: AppSite, at url: URL? = nil) -> [String] {
         var values = preferences(for: .web).keywords
         if site.usesAppShell { values += preferences(for: site).keywords }
-        else if let host = url?.host {
-            if host == "youtube.com" || host.hasSuffix(".youtube.com") { values += preferences(for: .youtube).keywords }
-            if host == "instagram.com" || host.hasSuffix(".instagram.com") { values += preferences(for: .instagram).keywords }
+        else if let host = url?.host, let owner = AppSite.shortVideoSite(for: host) {
+            values += preferences(for: owner).keywords
         }
         return Array(Set(values)).sorted()
     }
@@ -193,7 +273,8 @@ final class AppsLibrary {
     }
 
     func blocksShortVideos(for site: AppSite) -> Bool {
-        preferences(for: site).blockShortVideos || protectionBlocksShortVideos(for: site)
+        guard site.supportsShortVideoBlocking else { return false }
+        return preferences(for: site).blockShortVideos || protectionBlocksShortVideos(for: site)
     }
 
     func update(_ site: AppSite, _ change: (inout AppBrowsingPreferences) -> Void) {
@@ -242,10 +323,8 @@ final class AppsLibrary {
     }
 
     func blocksShortVideos(at url: URL) -> Bool {
-        guard let host = url.host else { return false }
-        if host == "youtube.com" || host.hasSuffix(".youtube.com") { return blocksShortVideos(for: .youtube) && AppSite.youtube.isShortVideo(url) }
-        if host == "instagram.com" || host.hasSuffix(".instagram.com") { return blocksShortVideos(for: .instagram) && AppSite.instagram.isShortVideo(url) }
-        return false
+        guard let site = AppSite.shortVideoSite(for: url.host) else { return false }
+        return blocksShortVideos(for: site) && site.isShortVideo(url)
     }
 
     func session(for site: AppSite) -> AppBrowserSession {

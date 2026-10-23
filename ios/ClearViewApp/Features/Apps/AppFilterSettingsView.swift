@@ -21,6 +21,8 @@ struct AppFilterSettingsView: View {
                         Text("All websites").tag(AppSite.web)
                         Text("YouTube").tag(AppSite.youtube)
                         Text("Instagram").tag(AppSite.instagram)
+                        Text("Snapchat").tag(AppSite.snapchat)
+                        Text("Facebook").tag(AppSite.facebook)
                     }
                 } footer: { Text("All-website keywords apply to every shortcut and web search. App keywords add to those rules.") }
                     .listRowBackground(Color.cvSurfaceContainerLow)

@@ -24,7 +24,7 @@ final class AppFlowsUITests: XCTestCase {
             }
             capture(tab, app: app)
         }
-        XCTAssertTrue(app.staticTexts["Your daily tools"].exists)
+        XCTAssertTrue(app.staticTexts["TOOLS"].exists)
         XCTAssertFalse(app.staticTexts["Coming soon"].exists)
     }
 

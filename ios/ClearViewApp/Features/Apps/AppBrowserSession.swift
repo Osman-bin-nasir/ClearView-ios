@@ -119,6 +119,8 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var configuration: [String: Any] {
         ["site": site.rawValue, "blockShorts": library?.blocksShortVideos(for: .youtube) ?? false,
          "blockReels": library?.blocksShortVideos(for: .instagram) ?? false,
+         "blockSpotlight": library?.blocksShortVideos(for: .snapchat) ?? false,
+         "blockFacebookReels": library?.blocksShortVideos(for: .facebook) ?? false,
          "hideGoogleCategories": library?.browserPreferences.hideGoogleCategories ?? true,
          "removeBlockedCards": library?.browserPreferences.removeBlockedCards ?? true,
          "blockAds": library?.browserPreferences.blockYouTubeAds ?? false,
@@ -363,10 +365,11 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                 url: rawURL, isYouTube: AppSite.youtube.owns(webView.url ?? site.home), isShort: row["short"] as? Bool ?? false)
             var decision = ProtectionMatcher.decision(forText: text + " " + creator, rules: localRules)
             if decision == nil { decision = ProtectionEnforcer.verdict(for: subject, rules: globalRules, options: protection.enforcementOptions) }
-            let shortBlocked = subject.isShort && (webView.url.map { current in
-                AppSite.youtube.owns(current) ? library?.blocksShortVideos(for: .youtube) == true
-                    : (AppSite.instagram.owns(current) && library?.blocksShortVideos(for: .instagram) == true)
-            } ?? false)
+            // The host in the address bar decides which app's Shorts/Reels/Spotlight
+            // switch applies, so a link followed from the shared browser is covered too.
+            let shortBlocked = subject.isShort && (webView.url.flatMap { current in
+                AppSite.shortVideoSite(for: current.host)
+            }.map { library?.blocksShortVideos(for: $0) == true } ?? false)
             let isBlocked = decision != nil || shortBlocked
             replies.append(["id": id, "revision": revision, "blocked": isBlocked])
             if isBlocked, reported.insert(subject.id).inserted {
