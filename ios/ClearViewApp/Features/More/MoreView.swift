@@ -26,7 +26,7 @@ struct MoreView: View {
                         MoreToolRow(title: "Protection", detail: "Blocking, keywords, websites, filtering and app lock", symbol: "shield.fill", highlighted: true)
                     }
                 }.padding(16)
-            }.background(Color.cvBackground).navigationTitle("")
+            }.background(Color.cvBackground).navigationTitle("More")
                 .onChange(of: deviceControls.expired) { _, expired in
                     if expired { showPhoneLimit = false; showSettings = false }
                 }
@@ -35,7 +35,7 @@ struct MoreView: View {
                 .toolbarBackground(Color.cvBackground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .principal) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("More").font(.title2.bold())
                             Text("Tools & protection").font(.caption).foregroundStyle(Color.cvOnSurfaceVariant)

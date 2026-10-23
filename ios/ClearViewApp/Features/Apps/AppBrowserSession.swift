@@ -18,6 +18,8 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     var externalURL: URL?
     var unsupportedLink = false
     var showsIntentHome = false
+    var navigationHidden = false
+    var protectionNotice: String?
 
     @ObservationIgnored private weak var library: AppsLibrary?
     @ObservationIgnored private(set) var webView: WKWebView!
@@ -28,7 +30,12 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     @ObservationIgnored private var compiledKeywords: [ProtectionKeywordEntry] = []
     @ObservationIgnored private var currentDocument = ""
     @ObservationIgnored private var scriptAvailable = false
+    @ObservationIgnored private var filterSource = ""
     @ObservationIgnored private var blockedForShortVideos = false
+    @ObservationIgnored private var rejectedURL: URL?
+    @ObservationIgnored private var pendingURL: URL?
+    @ObservationIgnored private var loadRevision = 0
+    @ObservationIgnored private var adRuleList: WKContentRuleList?
 
     init(site: AppSite, library: AppsLibrary) {
         self.site = site
@@ -47,6 +54,7 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         if let url = Bundle.main.url(forResource: "ClearViewApps", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
             scriptAvailable = true
+            filterSource = source
             let bootstrap = "const clearViewInitial = \(json(configuration));\n" + source
             controller.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart,
                                                   forMainFrameOnly: true, in: .defaultClient))
@@ -109,7 +117,12 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     private var configuration: [String: Any] {
-        ["site": site.rawValue, "blockShorts": blocksShortVideos, "active": active, "appShell": true,
+        ["site": site.rawValue, "blockShorts": library?.blocksShortVideos(for: .youtube) ?? false,
+         "blockReels": library?.blocksShortVideos(for: .instagram) ?? false,
+         "hideGoogleCategories": library?.browserPreferences.hideGoogleCategories ?? true,
+         "removeBlockedCards": library?.browserPreferences.removeBlockedCards ?? true,
+         "blockAds": library?.browserPreferences.blockYouTubeAds ?? false,
+         "active": active, "appShell": site.usesAppShell,
          "dark": webView?.traitCollection.userInterfaceStyle != .light]
     }
 
@@ -121,7 +134,7 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             isLoading = false
             return
         }
-        if webView.url == nil { goHome() }
+        if webView.url == nil && pendingURL == nil && rejectedURL == nil { goHome() }
         applyPreferences()
     }
 
@@ -134,12 +147,76 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func applyPreferences() {
+        // Future documents start with current settings before their first paint.
+        if scriptAvailable {
+            let controller = webView.configuration.userContentController
+            controller.removeAllUserScripts()
+            let bootstrap = "const clearViewInitial = \(json(configuration));\n" + filterSource
+            controller.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart,
+                forMainFrameOnly: true, in: .defaultClient))
+        }
         invoke("window.__clearviewApps?.update(config)", arguments: ["config": configuration])
-        if blocksShortVideos, let url = webView.url, site.isShortVideo(url) {
-            blockCurrentPage("\(site.shortVideoName) are hidden by your settings.", shortVideo: true)
-        } else if blockedForShortVideos && !blocksShortVideos {
-            blockedForShortVideos = false
-            blockedPage = nil
+        Task { await updateRequestRules() }
+        if let url = rejectedURL, !isBlockedShortURL(url), navigationDecision(for: url) == nil {
+            rejectedURL = nil
+            load(url)
+        } else if let url = webView.url {
+            if let allResults = library?.allGoogleResultsURL(url) { load(allResults); return }
+            if isBlockedShortURL(url) {
+                blockCurrentPage("Short videos are hidden by your settings.", shortVideo: true)
+            } else if let decision = navigationDecision(for: url) {
+                rejectedURL = url
+                blockCurrentPage("This page is hidden by your browser protection (\(decision.matched)).")
+            } else if blockedForShortVideos {
+                blockedForShortVideos = false
+                blockedPage = nil
+            }
+        }
+    }
+
+    func open(_ url: URL) { load(url) }
+
+    private func isBlockedShortURL(_ url: URL) -> Bool { library?.blocksShortVideos(at: url) ?? false }
+
+    private func navigationDecision(for url: URL) -> BlockDecision? {
+        let model = ProtectionModel.shared
+        let shared = model.rules()
+        let keywords = library?.keywords(for: site, at: url) ?? []
+        var rules = ProtectionRules(alwaysBlock: shared.alwaysBlock,
+            userKeywords: ProtectionMatcher.compile(keywords) + (model.protectionEnabled ? shared.userKeywords : []))
+        rules.domains = model.protectionEnabled ? shared.domains : ProtectionPresets.adultDomains.compactMap(ProtectionMatcher.normalizeDomain)
+        // Authentication query strings can contain tokens, not search terms.
+        if site.isAuthenticationPage(url) {
+            var domainRules = ProtectionRules()
+            domainRules.domains = rules.domains
+            return ProtectionMatcher.decision(forURL: url.host ?? "", rules: domainRules)
+        }
+        if let decision = ProtectionMatcher.decision(forURL: url.absoluteString.removingPercentEncoding ?? url.absoluteString, rules: rules) { return decision }
+        let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        if ["/search", "/results"].contains(url.path) || url.path.hasPrefix("/explore/search") {
+            for item in parts?.queryItems ?? [] where ["q", "search_query"].contains(item.name) {
+                if let value = item.value, let decision = ProtectionMatcher.decision(forText: value.replacingOccurrences(of: "+", with: " "), rules: rules) { return decision }
+            }
+        }
+        return nil
+    }
+
+    private func updateRequestRules() async {
+        guard library?.browserPreferences.blockYouTubeAds == true else {
+            if let adRuleList { webView.configuration.userContentController.remove(adRuleList); self.adRuleList = nil }
+            protectionNotice = nil
+            return
+        }
+        guard adRuleList == nil else { return }
+        do {
+            let rules = try await BrowserAdBlocker.rules()
+            guard library?.browserPreferences.blockYouTubeAds == true, adRuleList == nil else { return }
+            webView.configuration.userContentController.add(rules)
+            adRuleList = rules
+            protectionNotice = nil
+        } catch {
+            NSLog("ClearView ad rule compilation: %@", error.localizedDescription)
+            protectionNotice = "Ad request blocking couldn’t start. Reload to try again."
         }
     }
 
@@ -147,7 +224,8 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func search(_ query: String) {
         let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        load(site.searchURL(value))
+        if site.usesAppShell { load(site.searchURL(value)) }
+        else if let url = AppsLibrary.browserURL(value) { load(url) }
     }
 
     func navigate(_ destination: AppDestination) {
@@ -178,8 +256,8 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
                 self.load(self.site.search)
             }
     }
-    func goBack() { blockedPage = nil; errorMessage = nil; webView.goBack() }
-    func goForward() { blockedPage = nil; errorMessage = nil; webView.goForward() }
+    func goBack() { rejectedURL = nil; blockedPage = nil; errorMessage = nil; navigationHidden = false; webView.goBack() }
+    func goForward() { rejectedURL = nil; blockedPage = nil; errorMessage = nil; navigationHidden = false; webView.goForward() }
     func reload() {
         guard scriptAvailable else { return }
         errorMessage = nil
@@ -187,11 +265,36 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         if webView.url == nil { goHome() } else { webView.reload() }
     }
 
-    private func load(_ url: URL) {
+    private func load(_ requestedURL: URL) {
         guard scriptAvailable else { return }
+        let url = library?.allGoogleResultsURL(requestedURL) ?? requestedURL
         errorMessage = nil
         blockedPage = nil
-        webView.load(URLRequest(url: url))
+        rejectedURL = nil
+        pendingURL = nil
+        showsIntentHome = false
+        navigationHidden = false
+        loadRevision += 1
+        let revision = loadRevision
+        guard !isBlockedShortURL(url) else {
+            rejectedURL = url
+            blockCurrentPage("Short videos are hidden by your settings.", shortVideo: true)
+            return
+        }
+        if let decision = navigationDecision(for: url) {
+            rejectedURL = url
+            blockCurrentPage("This page is hidden by your browser protection (\(decision.matched)).")
+            return
+        }
+        pendingURL = url
+        isLoading = true
+        // Install request blocking before this navigation starts.
+        Task {
+            await updateRequestRules()
+            guard revision == loadRevision else { return }
+            pendingURL = nil
+            webView.load(URLRequest(url: url))
+        }
     }
 
     private func blockCurrentPage(_ reason: String, shortVideo: Bool = false) {
@@ -215,6 +318,12 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard active, message.frameInfo.isMainFrame,
               let url = message.frameInfo.request.url, site.owns(url),
               let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
+        if kind == "whitespaceTap" {
+            guard body["url"] as? String == webView.url?.absoluteString,
+                  !site.isAuthenticationPage(webView.url ?? site.home), blockedPage == nil else { return }
+            navigationHidden.toggle()
+            return
+        }
         if kind == "route" || kind == "ready" {
             applyPreferences()
             return
@@ -231,10 +340,10 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             reported.removeAll()
         }
         let protection = ProtectionModel.shared
-        let prefs = library?.preferences(for: site) ?? AppBrowsingPreferences()
-        if keywordSignature != prefs.keywords {
-            keywordSignature = prefs.keywords
-            compiledKeywords = ProtectionMatcher.compile(prefs.keywords)
+        let keywords = library?.keywords(for: site, at: webView.url) ?? []
+        if keywordSignature != keywords {
+            keywordSignature = keywords
+            compiledKeywords = ProtectionMatcher.compile(keywords)
         }
         // Apps' explicit keywords and the adult tier work immediately. Additional
         // shared/YouTube/channel rules follow the existing Protection switches.
@@ -251,10 +360,14 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             let identity = rawURL.isEmpty ? String(text.prefix(160)) : rawURL
             let subject = ProtectionSubject(id: "apps:\(site.rawValue):\(identity)",
                 title: text, channelName: creator, channelHandle: creator,
-                url: rawURL, isYouTube: site == .youtube, isShort: row["short"] as? Bool ?? false)
+                url: rawURL, isYouTube: AppSite.youtube.owns(webView.url ?? site.home), isShort: row["short"] as? Bool ?? false)
             var decision = ProtectionMatcher.decision(forText: text + " " + creator, rules: localRules)
             if decision == nil { decision = ProtectionEnforcer.verdict(for: subject, rules: globalRules, options: protection.enforcementOptions) }
-            let isBlocked = decision != nil || (blocksShortVideos && subject.isShort)
+            let shortBlocked = subject.isShort && (webView.url.map { current in
+                AppSite.youtube.owns(current) ? library?.blocksShortVideos(for: .youtube) == true
+                    : (AppSite.instagram.owns(current) && library?.blocksShortVideos(for: .instagram) == true)
+            } ?? false)
+            let isBlocked = decision != nil || shortBlocked
             replies.append(["id": id, "revision": revision, "blocked": isBlocked])
             if isBlocked, reported.insert(subject.id).inserted {
                 hiddenCount += 1
@@ -270,9 +383,15 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         // Subframes include video/CDN resources and federated login widgets.
         if action.targetFrame?.isMainFrame == false { decisionHandler(.allow); return }
-        if blocksShortVideos && site.isShortVideo(url) {
+        if let allResults = library?.allGoogleResultsURL(url) {
             decisionHandler(.cancel)
-            blockCurrentPage("\(site.shortVideoName) are hidden by your settings.", shortVideo: true)
+            load(allResults)
+            return
+        }
+        if isBlockedShortURL(url) {
+            decisionHandler(.cancel)
+            rejectedURL = url
+            blockCurrentPage("Short videos are hidden by your settings.", shortVideo: true)
             return
         }
         if let equivalent = site.webEquivalent(of: url) {
@@ -281,12 +400,10 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             return
         }
         if site.owns(url) || site.allowsAuthentication(url) {
-            let model = ProtectionModel.shared
-            if model.protectionEnabled,
-               let match = ProtectionMatcher.decision(forURL: url.absoluteString, rules: model.rules()),
-               match.category == "Blocked website" {
+            if let decision = navigationDecision(for: url) {
                 decisionHandler(.cancel)
-                blockCurrentPage("This website is blocked in Protection.")
+                rejectedURL = url
+                blockCurrentPage("This page is hidden by your browser protection (\(decision.matched)).")
                 return
             }
             decisionHandler(.allow)
@@ -304,6 +421,7 @@ final class AppBrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
+        navigationHidden = false
         showsIntentHome = false
         errorMessage = nil
         blockedPage = nil

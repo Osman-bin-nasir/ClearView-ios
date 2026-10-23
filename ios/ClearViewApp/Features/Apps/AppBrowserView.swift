@@ -26,7 +26,10 @@ struct AppBrowserView: View {
 
     private var browserLayout: some View {
         VStack(spacing: 0) {
-            header
+            if !session.navigationHidden { header }
+            if let notice = session.protectionNotice {
+                Text(notice).font(.caption).foregroundStyle(Color.cvOnSurfaceVariant).padding(8)
+            }
             ZStack(alignment: .leading) {
                 Color.cvOutlineVariant.opacity(0.3)
                 GeometryReader { geometry in
@@ -50,8 +53,19 @@ struct AppBrowserView: View {
                     }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.cvBackground)
                 }
             }
-            if session.showsAppNavigation { navigationBar }
+            if session.showsAppNavigation && !session.navigationHidden {
+                if session.site.usesAppShell { navigationBar } else { browserToolbar }
+            }
+        }.overlay(alignment: .bottomTrailing) {
+            if session.navigationHidden {
+                Button { withAnimation(.easeInOut(duration: 0.18)) { session.navigationHidden = false } } label: {
+                    Image(systemName: "chevron.up").font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cvPrimary).frame(width: 44, height: 34)
+                        .background(Color.cvSurfaceContainerHigh, in: Capsule())
+                }.padding(12).accessibilityLabel("Show navigation").accessibilityIdentifier("browser.show-navigation")
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: session.navigationHidden)
     }
 
     private var configuredBrowser: some View {
@@ -69,7 +83,7 @@ struct AppBrowserView: View {
         }
         .onDisappear { session.pause() }
         .sheet(isPresented: $showFilters, onDismiss: { session.applyPreferences() }) {
-            AppFilterSettingsView(site: session.site, library: library)
+            BrowserProtectionSettingsView(library: library)
         }
         .sheet(isPresented: $showSearch) {
             AppSearchSheet(site: session.site) { session.search($0) }
@@ -107,7 +121,7 @@ struct AppBrowserView: View {
             if session.showsAppNavigation {
                 Button { showSearch = true } label: {
                     Image(systemName: "magnifyingglass").font(.system(size: 21)).frame(width: 40, height: 44)
-                }.accessibilityLabel("Search \(session.site.name)")
+                }.accessibilityLabel(session.site.usesAppShell ? "Search \(session.site.name)" : "Search the web")
                 if session.site == .instagram {
                     Button { session.openInbox() } label: {
                         Image(systemName: "paperplane").font(.system(size: 20)).frame(width: 40, height: 44)
@@ -121,7 +135,7 @@ struct AppBrowserView: View {
             Menu {
                 if session.canGoBack { Button("Back", systemImage: "chevron.left") { session.goBack() } }
                 Button("Reload", systemImage: "arrow.clockwise") { session.reload() }
-                Button("Filter settings", systemImage: "slider.horizontal.3") { showFilters = true }
+                Button("Protection settings", systemImage: "slider.horizontal.3") { showFilters = true }
                 Button("Back to Apps", systemImage: "square.grid.2x2") { session.pause(); dismiss() }
                 Button("Sign-in help", systemImage: "person.crop.circle.badge.questionmark") { showSignInHelp = true }
                 if let url = session.currentURL {
@@ -172,13 +186,27 @@ struct AppBrowserView: View {
                 Image(systemName: "play.rectangle.fill").font(.system(size: 25)).foregroundStyle(.red)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.showsAppNavigation ? session.site.name : "Sign in")
+                Text(session.showsAppNavigation ? (session.site.usesAppShell ? session.site.name : "ClearView") : "Sign in")
                     .font(.system(size: 21, weight: .bold, design: .rounded)).tracking(-0.7)
-                if !session.showsAppNavigation {
-                    Text(session.currentURL?.host ?? "").font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
+                if !session.showsAppNavigation || !session.site.usesAppShell {
+                    Text(session.currentURL?.host ?? "Search the web").font(.caption2).foregroundStyle(Color.cvOnSurfaceVariant)
                 }
             }
         }
+    }
+
+    private var browserToolbar: some View {
+        HStack {
+            Button { session.goBack() } label: { Image(systemName: "chevron.left").frame(maxWidth: .infinity, minHeight: 48) }
+                .disabled(!session.canGoBack).accessibilityLabel("Back")
+            Button { session.goForward() } label: { Image(systemName: "chevron.right").frame(maxWidth: .infinity, minHeight: 48) }
+                .disabled(!session.canGoForward).accessibilityLabel("Forward")
+            Button { session.goHome() } label: { Image(systemName: "house").frame(maxWidth: .infinity, minHeight: 48) }.accessibilityLabel("Google home")
+            Button { showSearch = true } label: { Image(systemName: "magnifyingglass").frame(maxWidth: .infinity, minHeight: 48) }.accessibilityLabel("Search the web")
+            Button { session.reload() } label: { Image(systemName: "arrow.clockwise").frame(maxWidth: .infinity, minHeight: 48) }.accessibilityLabel("Reload page")
+        }.font(.system(size: 20)).buttonStyle(.plain).foregroundStyle(Color.cvOnSurface)
+            .background(Color.cvSurfaceContainerLow)
+            .overlay(alignment: .top) { Color.cvOutlineVariant.opacity(0.3).frame(height: 0.5) }
     }
 
     private var visibleDestinations: [AppDestination] {
@@ -228,16 +256,16 @@ private struct AppSearchSheet: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass").foregroundStyle(Color.cvPrimary)
-                    TextField("What do you want to find?", text: $query)
+                    TextField(site.usesAppShell ? "What do you want to find?" : "Search or enter website address", text: $query)
                         .focused($focused).submitLabel(.search).onSubmit(submit)
                         .accessibilityIdentifier("apps.search.query")
                 }.padding(16).background(Color.cvSurfaceContainerLow, in: RoundedRectangle(cornerRadius: 16))
-                Text("Find something worth your time.").font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
+                Text(site.usesAppShell ? "Find something worth your time." : "ClearView protection applies to your searches and websites.").font(.subheadline).foregroundStyle(Color.cvOnSurfaceVariant)
                 Button("Search", action: submit).buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer(minLength: 0)
             }.padding(20).background(Color.cvBackground)
-                .navigationTitle("Search \(site.name)").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle(site.usesAppShell ? "Search \(site.name)" : "Search the web").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
                 .task { focused = true }
         }.tint(.cvPrimary).presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
